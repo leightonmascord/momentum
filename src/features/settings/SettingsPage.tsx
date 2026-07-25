@@ -11,6 +11,7 @@ import type { BackupPayload } from '../../lib/backup'
 import { pushSettings } from '../../lib/settings-sync'
 import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
+import { requestNotificationPermission } from '../../lib/notification-service'
 
 const STORAGE_KEY = 'momentum-settings'
 
@@ -409,6 +410,13 @@ export default function SettingsPage() {
             </CardHeader>
             <SettingsField label="Play sound on timer end">
               <Toggle value={settings.soundEnabled} onChange={(v) => update({ soundEnabled: v })} />
+            </SettingsField>
+            <SettingsField label="Desktop notifications">
+              <Button variant="secondary" size="sm" onClick={async () => {
+                const granted = await requestNotificationPermission()
+                if (granted) window.alert('Notifications enabled!')
+                else window.alert('Notifications denied or not supported in this browser.')
+              }}>Enable Desktop Notifications</Button>
             </SettingsField>
           </Card>
           <Card>
