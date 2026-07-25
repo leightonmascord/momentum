@@ -81,6 +81,8 @@ export interface PersistedTimerState {
   parentSubjectId?: string | null
   /** Notes about what the user is studying. */
   notes?: string
+  /** Focus quality tag for the active session. */
+  focusTag?: 'focused' | 'distracted' | 'group' | 'revision'
 }
 export function saveTimerState(state: PersistedTimerState): void {
   try {
@@ -135,6 +137,7 @@ export function splitSessionAtMidnight(
     durationMinutes: number
     durationSeconds?: number
     note: string | undefined
+    focusTag?: 'focused' | 'distracted' | 'group' | 'revision'
     source: 'timer' | 'pomodoro' | 'quickLog'
     createdAt: string
     updatedAt: string
@@ -150,6 +153,7 @@ export function splitSessionAtMidnight(
   durationSeconds: number
   note: string | undefined
   source: 'timer' | 'pomodoro' | 'quickLog'
+  focusTag?: 'focused' | 'distracted' | 'group' | 'revision'
   createdAt: string
   updatedAt: string
 }> {

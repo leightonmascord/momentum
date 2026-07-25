@@ -11,6 +11,7 @@ import type { Settings } from '../../lib/settings-store'
 import { useSessionSync } from '../../lib/use-session-sync'
 import { updateRoutineLogsForSession, updateStreakDayForSession } from '../../lib/routine-tracker'
 import { clearTimerState, loadTimerState, saveTimerState, savePendingSession, loadPendingSession, clearPendingSession, sessionIdFor, splitSessionAtMidnight } from '../../lib/timer-persistence'
+import { FocusTagSelector, type FocusTag } from '../ui/FocusTagSelector'
 import type { PersistedTimerState, PendingSession } from '../../lib/timer-persistence'
 import { useAllGroupsPresence } from '../../lib/use-all-groups-presence'
 import { groupService } from '../../lib/group-service'
@@ -160,6 +161,7 @@ export function PomodoroTimer() {
   const [changeSubjectOpen, setChangeSubjectOpen] = useState(false)
   const [changeSubjectConfirmation, setChangeSubjectConfirmation] = useState('')
   const changeSubjectConfirmationTimer = useRef<number | null>(null)
+  const [timerFocusTag, setTimerFocusTag] = useState<FocusTag | null>(null)
   const [timerNotes, setTimerNotes] = useState('')
   const [myGroups, setMyGroups] = useState<Group[]>([])
   const [uid, setUid] = useState<string | null>(null)
@@ -388,6 +390,7 @@ export function PomodoroTimer() {
           durationMinutes,
           durationSeconds: durationMinutes * 60,
           note: task ? `Task: ${task.title}` : undefined,
+          focusTag: timerFocusTag ?? undefined,
           source: 'pomodoro',
           createdAt: isoNow(),
           updatedAt: isoNow(),
@@ -543,33 +546,8 @@ export function PomodoroTimer() {
     return () => { groupService.clearPresence(uid).catch(() => {}) }
   }, [isRunning, subjectId, data.subjects])
 
-  // Pause timer when tab is hidden (lid close, screen lock, etc.)
-  useEffect(() => {
-    let wasHidden = document.hidden
-    function onVisibilityChange() {
-      const nowHidden = document.hidden
-      // Tab just became hidden while timer was running
-      if (nowHidden && !wasHidden && (simpleStartedAt || pomStartedAt)) {
-        if (simpleStartedAt) {
-          pauseSimple()
-        } else if (pomStartedAt) {
-          pausePomodoro()
-        }
-        try {
-          import('../../lib/notification-service').then(({ sendNotification }) => {
-            sendNotification(
-              'Study session paused',
-              'Timer paused while tab was hidden. Come back to resume!',
-              'visibility-pause'
-            )
-          })
-        } catch { /* ignore */ }
-      }
-      wasHidden = nowHidden
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [simpleStartedAt, pomStartedAt])
+  // Timer continues running in background via wall-clock computation.
+  // The crash-safety save in handleVisibilityChange above handles persistence.
   useEffect(() => {
     function onDiscardSession() {
       // Only prompt if there's an active or paused session
@@ -719,6 +697,7 @@ export function PomodoroTimer() {
     durationMinutes: number
     durationSeconds: number
     note: string | undefined
+    focusTag: 'focused' | 'distracted' | 'group' | 'revision' | undefined
     source: 'timer' | 'pomodoro' | 'quickLog'
     createdAt: string
     updatedAt: string
@@ -761,6 +740,7 @@ export function PomodoroTimer() {
         durationSeconds,
         note: timerNotes || (task ? `Task: ${task.title}` : undefined),
         source: 'timer',
+        focusTag: timerFocusTag ?? undefined,
         createdAt: isoNow(),
         updatedAt: isoNow(),
       })
@@ -801,6 +781,7 @@ export function PomodoroTimer() {
           durationMinutes,
           durationSeconds,
           note: task ? `Task: ${task.title}` : undefined,
+          focusTag: timerFocusTag ?? undefined,
           source: 'timer',
           createdAt: isoNow(),
           updatedAt: isoNow(),
@@ -831,6 +812,7 @@ export function PomodoroTimer() {
             durationMinutes: partialMinutes,
             durationSeconds: partialSeconds,
             note: task ? `Task: ${task.title}` : undefined,
+            focusTag: timerFocusTag ?? undefined,
             source: 'pomodoro',
             createdAt: isoNow(),
             updatedAt: isoNow(),
@@ -945,6 +927,7 @@ export function PomodoroTimer() {
           durationSeconds: partialSeconds,
           note: timerNotes || (task ? `Task: ${task.title}` : undefined),
           source: 'pomodoro',
+          focusTag: timerFocusTag ?? undefined,
           createdAt: isoNow(),
           updatedAt: isoNow(),
         })
@@ -968,6 +951,8 @@ export function PomodoroTimer() {
     setSafetyMessage('')
     setShowDiscardConfirm(false)
     clearPendingSession()
+    clearTimerState()
+    setTimerFocusTag(null)
     setTimerNotes('')
   }
 
@@ -1270,6 +1255,21 @@ export function PomodoroTimer() {
                 </select>
               </div>
             )}
+            <div>
+              <label className="label">What are you working on?</label>
+              <textarea
+                placeholder="Optional notes"
+                value={timerNotes}
+                onChange={(e) => {
+                  setTimerNotes(e.target.value)
+                  const state = loadTimerState()
+                  if (state) saveTimerState({ ...state, notes: e.target.value })
+                }}
+                className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
+                rows={2}
+              />
+              <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
+            </div>
           </>
         ) : !(mode === 'simple' && (simpleStartedAt !== null || simplePausedOffset > 0)) ? (
           <>
@@ -1292,6 +1292,7 @@ export function PomodoroTimer() {
               className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
               rows={2}
             />
+            <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
           </>
         ) : null}
       </div>
@@ -1313,6 +1314,7 @@ export function PomodoroTimer() {
             className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
             rows={2}
           />
+          <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
           <div className="text-center text-6xl font-bold tabular-nums text-slate-800 dark:text-slate-100">
             {fmt(simpleSeconds)}
           </div>

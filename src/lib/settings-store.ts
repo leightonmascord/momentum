@@ -17,6 +17,7 @@ export type Settings = {
   maxActiveHabits: number
   defaultArchiveDays: number
   settingsUpdatedAt: string
+  devMode?: boolean
 }
 
 const STORAGE_KEY = 'momentum-settings'

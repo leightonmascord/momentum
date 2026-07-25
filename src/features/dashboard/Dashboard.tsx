@@ -1,4 +1,5 @@
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
+import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
 import { SubjectBreakdown } from '../../components/widgets/SubjectBreakdown'
 import { formatTotalToday, getLiveTimerSeconds, getLiveTimerSubjectId, getTotalTodayMinutes, isTimerActive } from '../../lib/timer-utils'
 import { useEffect, useMemo, useState } from 'react'
@@ -13,6 +14,7 @@ import { PageSpinner } from '../../components/ui/Spinner'
 import { NumberInput } from '../../components/ui/NumberInput'
 import { Modal } from '../../components/ui/Modal'
 import { HoverCard } from '../../components/ui/HoverCard'
+import { ContextMenu } from '../../components/ui/ContextMenu'
 import { useSwipe } from '../../lib/use-swipe'
 import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString } from '../../lib/utils'
 import { loadSettings } from '../../lib/settings-store'
@@ -38,7 +40,7 @@ function SessionRow({
   session, project, menuSessionId, setMenuSessionId,
   setEditLog, setEditDuration, setEditDate, setEditSubjectId,
   deleteSession,
-  selected, onToggleSelect,
+  selected, onToggleSelect, selectionMode,
 }: {
   session: Session & { subjectName: string; subjectColor: string }
   project: { name: string } | undefined
@@ -51,6 +53,7 @@ function SessionRow({
   deleteSession: (id: string) => void
   selected: boolean
   onToggleSelect: (id: string) => void
+  selectionMode: boolean
 }) {
   const swipe = useSwipe({
     onSwipeLeft: () => deleteSession(session.id),
@@ -63,68 +66,76 @@ function SessionRow({
   })
   const srcLabel = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   return (
-    <li
-      key={session.id}
-      className="flex items-center justify-between py-2"
-      onDoubleClick={() => {
-        setEditLog(session)
-        setEditDuration(session.durationMinutes)
-        setEditDate(toLocalDateString(session.startAt))
-        setEditSubjectId(session.subjectId)
-      }}
-      {...swipe}
-    >
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => onToggleSelect(session.id)}
-        className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-primary-600 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-700"
-        aria-label={`Select session ${session.subjectName}`}
-      />
-      <HoverCard
-        content={
-          <div className="space-y-1 text-sm">
-            <div className="font-medium">{session.subjectName}</div>
-            {project && <div className="text-slate-500">{project.name}</div>}
-            <div className="text-slate-500">{format(new Date(session.startAt), 'h:mm a')} · {formatMinutes(session.durationMinutes)}</div>
-            <div className="text-slate-500">Source: {srcLabel}</div>
-            {session.note && <div className="text-slate-400 italic">{session.note}</div>}
-          </div>
-        }
+    <ContextMenu items={[
+      { label: 'Edit', action: () => { setEditLog(session); setEditDuration(session.durationMinutes); setEditDate(toLocalDateString(session.startAt)); setEditSubjectId(session.subjectId) } },
+      { label: 'Copy', action: () => copySessionInfo(session) },
+      { label: 'Delete', action: () => deleteSession(session.id), danger: true },
+    ]}>
+      <li
+        key={session.id}
+        className="flex items-center justify-between py-2"
+        onDoubleClick={() => {
+          setEditLog(session)
+          setEditDuration(session.durationMinutes)
+          setEditDate(toLocalDateString(session.startAt))
+          setEditSubjectId(session.subjectId)
+        }}
+        {...swipe}
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: session.subjectColor }} />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{session.subjectName}{project && <span className="text-slate-500"> · {project.name}</span>}</div>
-            <div className="text-xs text-slate-500">{format(new Date(session.startAt), 'h:mm a')}{session.source === 'timer' ? ' ⏱' : session.source === 'pomodoro' ? ' 🍅' : ' ✏️'}</div>
+        {selectionMode && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(session.id)}
+            className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-primary-600 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-700"
+            aria-label={`Select session ${session.subjectName}`}
+          />
+        )}
+        <HoverCard
+          content={
+            <div className="space-y-1 text-sm">
+              <div className="font-medium">{session.subjectName}</div>
+              {project && <div className="text-slate-500">{project.name}</div>}
+              <div className="text-slate-500">{format(new Date(session.startAt), 'h:mm a')} · {formatMinutes(session.durationMinutes)}</div>
+              <div className="text-slate-500">Source: {srcLabel}</div>
+              {session.note && <div className="text-slate-400 italic">{session.note}</div>}
+            </div>
+          }
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: session.subjectColor }} />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{session.subjectName}{project && <span className="text-slate-500"> · {project.name}</span>}</div>
+              <div className="text-xs text-slate-500">{format(new Date(session.startAt), 'h:mm a')}{session.source === 'timer' ? ' ⏱' : session.source === 'pomodoro' ? ' 🍅' : ' ✏️'}</div>
+            </div>
+          </div>
+        </HoverCard>
+        <div className="flex items-center gap-2">
+          <div className="text-sm text-slate-600">{formatMinutes(session.durationMinutes)}</div>
+          <div className="relative">
+            <button type="button" aria-label="More actions" onClick={() => setMenuSessionId(menuSessionId === session.id ? null : session.id)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700">
+              <span className="block text-lg leading-none">⋯</span>
+            </button>
+            {menuSessionId === session.id && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setMenuSessionId(null)} />
+                <div className="absolute right-0 z-30 mt-1 w-36 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setEditLog(session); setEditDuration(session.durationMinutes); setEditDate(toLocalDateString(session.startAt)); setEditSubjectId(session.subjectId); setMenuSessionId(null) }}>
+                    Edit time
+                  </button>
+                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { copySessionInfo(session); setMenuSessionId(null) }}>
+                    Copy
+                  </button>
+                  <button type="button" className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { deleteSession(session.id); setMenuSessionId(null) }}>
+                    Delete
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
-      </HoverCard>
-      <div className="flex items-center gap-2">
-        <div className="text-sm text-slate-600">{formatMinutes(session.durationMinutes)}</div>
-        <div className="relative">
-          <button type="button" aria-label="More actions" onClick={() => setMenuSessionId(menuSessionId === session.id ? null : session.id)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700">
-            <span className="block text-lg leading-none">⋯</span>
-          </button>
-          {menuSessionId === session.id && (
-            <>
-              <div className="fixed inset-0 z-20" onClick={() => setMenuSessionId(null)} />
-              <div className="absolute right-0 z-30 mt-1 w-36 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setEditLog(session); setEditDuration(session.durationMinutes); setEditDate(toLocalDateString(session.startAt)); setEditSubjectId(session.subjectId); setMenuSessionId(null) }}>
-                  Edit time
-                </button>
-                <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { copySessionInfo(session); setMenuSessionId(null) }}>
-                  Copy
-                </button>
-                <button type="button" className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { deleteSession(session.id); setMenuSessionId(null) }}>
-                  Delete
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </li>
+      </li>
+    </ContextMenu>
   )
 }
 
@@ -141,8 +152,10 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [fabOpen, setFabOpen] = useState(false)
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
+  const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
   const [batchSubjectId, setBatchSubjectId] = useState('')
+  const [showActivityConfirmation, setShowActivityConfirmation] = useState(true)
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   // Exclude soft-deleted sessions from streak / stats calculations.
@@ -214,7 +227,6 @@ export default function Dashboard() {
     try { return JSON.parse(sessionStorage.getItem(LOG_FORM_KEY) ?? 'null') } catch { return null }
   })()
 
-  const [logSubjectManuallySet, setLogSubjectManuallySet] = useState(false)
   const [logSubjectId, setLogSubjectId] = useState(persistedForm?.subjectId ?? '')
   const [logProjectId, setLogProjectId] = useState(persistedForm?.projectId ?? '')
   const [logTaskId, setLogTaskId] = useState(persistedForm?.taskId ?? '')
@@ -377,7 +389,7 @@ export default function Dashboard() {
         await revertStreakDayForSession(session)
       }
     }
-    setSelectedSessionIds(new Set())
+    setSelectedSessionIds(new Set()); setSelectionMode(false)
     await loadData()
   }
 
@@ -386,7 +398,7 @@ export default function Dashboard() {
     for (const id of selectedSessionIds) {
       await db.sessions.update(id, { subjectId: batchSubjectId, updatedAt: isoNow() })
     }
-    setSelectedSessionIds(new Set())
+    setSelectedSessionIds(new Set()); setSelectionMode(false)
     setBatchSubjectModalOpen(false)
     setBatchSubjectId('')
     await loadData()
@@ -395,7 +407,17 @@ export default function Dashboard() {
     if (visibleWidgets.includes(id)) {
       setVisibleWidgets(visibleWidgets.filter((w) => w !== id))
     } else {
-      setVisibleWidgets([...visibleWidgets, id])
+      // Insert at the original position from DASHBOARD_WIDGETS_METADATA so
+      // the widget returns to its natural slot after being toggled off/on.
+      const targetIdx = DASHBOARD_WIDGETS_METADATA.findIndex((w) => w.id === id)
+      const insertAt = visibleWidgets.findIndex((vid) => {
+        const mi = DASHBOARD_WIDGETS_METADATA.findIndex((w) => w.id === vid)
+        return mi > targetIdx
+      })
+      const next = [...visibleWidgets]
+      if (insertAt === -1) next.push(id)
+      else next.splice(insertAt, 0, id)
+      setVisibleWidgets(next)
     }
   }
 
@@ -722,8 +744,6 @@ export default function Dashboard() {
                 )
               })}
             </div>
-            {goalPct >= 100 && <div className="text-sm font-medium text-green-600">Goal reached!</div>}
-            {goalPct < 100 && todayMinutes > 0 && <div className="text-sm text-slate-500">{formatMinutes(settings.dailyTargetMinutes - todayMinutes)} to go</div>}
           </div>
         )
       }
@@ -826,12 +846,18 @@ export default function Dashboard() {
               <p className="text-sm text-slate-500">No sessions yet. Start studying!</p>
             ) : (
               <div className="space-y-3">
+                {selectedSessionIds.size === 0 && (
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="secondary" onClick={() => setSelectionMode(true)}>Select Sessions</Button>
+                  </div>
+                )}
                 {selectedSessionIds.size > 0 && (
                   <div className="flex items-center justify-between gap-2 rounded-md border border-primary-300 bg-primary-50 px-3 py-2 dark:border-primary-700 dark:bg-primary-900/30">
                     <span className="text-sm font-medium text-primary-900 dark:text-primary-100">
                       {selectedSessionIds.size} selected
                     </span>
                     <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => { setSelectedSessionIds(new Set()); setSelectionMode(false) }}>Cancel</Button>
                       <Button
                         size="sm"
                         variant="secondary"
@@ -873,7 +899,7 @@ export default function Dashboard() {
                 )}
                 {academicSessions.length > 50 && (
                   <div className="text-right text-xs text-slate-500">
-                    Showing {recentSessions.length} of {academicSessions.length}
+                    Showing {recentSessions.length} of {allRecent.length}
                   </div>
                 )}
                 {(() => {
@@ -913,6 +939,7 @@ export default function Dashboard() {
                               deleteSession={deleteSession}
                               selected={selectedSessionIds.has(session.id)}
                               onToggleSelect={(id) => setSelectedSessionIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })}
+                              selectionMode={selectionMode || selectedSessionIds.size > 0}
                             />
                           )
                         })}
@@ -1160,6 +1187,9 @@ export default function Dashboard() {
         Customise
       </button>
       {/* Dashboard grid with widgets */}
+      {showActivityConfirmation && (
+        <ActivityConfirmationCard onDismiss={() => setShowActivityConfirmation(false)} />
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-[minmax(80px,auto)] grid-flow-dense">
         {visibleWidgets.map(id => {
           const size = widgetConfigs[id]?.size || 'small'
@@ -1287,7 +1317,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-end gap-3">
             <div>
               <label className="label">Subject</label>
-              <select className="input" value={logSubjectId} onChange={(e) => { const val = e.target.value; setLogSubjectId(val); setLogSubjectManuallySet(val !== ''); setLogProjectId(''); setLogTaskId('') }}>
+              <select className="input" value={logSubjectId} onChange={(e) => { const val = e.target.value; setLogSubjectId(val); setLogProjectId(''); setLogTaskId('') }}>
                 <option value="">Select subject</option>
                 {data.subjects.filter(s => !s.deletedAt).map((s) => <option key={s.id} value={s.id}>{getSubjectPathLabel(s.id, data.subjects)}</option>)}
               </select>
@@ -1295,7 +1325,7 @@ export default function Dashboard() {
             {logSubjectId && data.projects.filter((p) => !p.deletedAt && p.subjectId === logSubjectId).length > 0 && (
               <div>
                 <label className="label">Project (optional)</label>
-                <select className="input" value={logProjectId} onChange={(e) => { const pid = e.target.value; setLogProjectId(pid); setLogTaskId(''); if (pid && !logSubjectManuallySet) { const proj = data.projects.find((p) => p.id === pid); if (proj) setLogSubjectId(proj.subjectId) } }}>
+                <select className="input" value={logProjectId} onChange={(e) => { const pid = e.target.value; setLogProjectId(pid); setLogTaskId(''); if (pid && !logSubjectId) { const proj = data.projects.find((p) => p.id === pid); if (proj) setLogSubjectId(proj.subjectId) } }}>
                   <option value="">— Select project —</option>
                   {data.projects.filter((p) => !p.deletedAt && p.subjectId === logSubjectId).map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>

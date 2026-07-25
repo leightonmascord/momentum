@@ -11,6 +11,7 @@ import { Button } from '../ui/Button'
 import { SyncBanner } from '../ui/SyncBanner'
 import { FloatingTimerBanner } from '../ui/FloatingTimerBanner'
 import { OnboardingTour } from '../ui/OnboardingTour'
+import { DevBanner } from '../ui/DevBanner'
 import { CommandPalette, useCommandPalette } from '../ui/CommandPalette'
 import { useFocusMode } from '../../lib/use-focus-mode'
 
@@ -152,15 +153,23 @@ export function AppLayout({ children }: { children: ReactNode }) {
     }
 
     function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null
       const focused = isInputFocused()
+      const targetIsInput = !!target && (
+        target.tagName.toLowerCase() === 'input' ||
+        target.tagName.toLowerCase() === 'textarea' ||
+        target.tagName.toLowerCase() === 'select' ||
+        target.isContentEditable ||
+        target.getAttribute('role') === 'textbox' ||
+        target.getAttribute('role') === 'combobox' ||
+        target.getAttribute('role') === 'searchbox'
+      )
       const shortcutKey = eventToShortcutKey(e)
-
       // Find matching shortcut by keys string
       const shortcut = SHORTCUTS.find((s) => s.keys === shortcutKey)
       if (!shortcut) return
-
-      // Suppress all shortcuts except Esc and Cmd+K/Ctrl+K when in input
-      if (focused) {
+      // Suppress all shortcuts except Esc and Cmd+K/Ctrl+K when typing in any input-like target.
+      if (focused || targetIsInput) {
         const allowed = shortcutKey === 'Esc' || shortcutKey === 'Cmd+K' || shortcutKey === 'Ctrl+K'
         if (!allowed) return
       }
@@ -405,6 +414,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <SyncBanner />
+      <DevBanner />
       <div className="flex flex-1 overflow-hidden">
       <aside
         role="navigation"

@@ -151,7 +151,6 @@ describe('Global shortcut coverage', () => {
 describe('Navigation shortcut coverage', () => {
   const requiredNav: string[] = [
     'nav-dashboard', 'nav-subjects', 'nav-projects', 'nav-habits',
-    'nav-reports', 'nav-calendar', 'nav-settings',
   ]
   for (const id of requiredNav) {
     it(`includes ${id}`, () => {

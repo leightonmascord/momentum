@@ -7,6 +7,7 @@ import { Modal } from '../../components/ui/Modal'
 import { useData } from '../../app/providers'
 import { useAuth } from '../../app/auth-provider'
 import { downloadBackup, readBackupFile, importBackup, ImportMode } from '../../lib/backup'
+import type { BackupPayload } from '../../lib/backup'
 import { pushSettings } from '../../lib/settings-sync'
 import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
@@ -26,6 +27,7 @@ export type Settings = {
   maxActiveHabits: number
   defaultArchiveDays: number
   settingsUpdatedAt: string
+  devMode?: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -141,7 +143,7 @@ function DataImport() {
   const { loadData } = useData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  const [pendingPayload, setPendingPayload] = useState<Awaited<ReturnType<typeof readBackupFile>> | null>(null)
+  const [pendingPayload, setPendingPayload] = useState<BackupPayload | null>(null)
   const [preview, setPreview] = useState<{ total: number; tables: string[] } | null>(null)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')

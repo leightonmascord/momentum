@@ -34,7 +34,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'help-alt', label: 'Keyboard Shortcuts', keys: 'Cmd+/', category: 'global', description: 'Open keyboard shortcut help overlay' },
   { id: 'replay-tour', label: 'Replay onboarding tour', keys: 'Cmd+Shift+I', category: 'global', description: 'Replay the onboarding tour' },
   { id: 'focus-mode', label: 'Focus Mode', keys: 'Cmd+Shift+F', category: 'global', description: 'Toggle focus mode (hide sidebar and chrome)' },
-  { id: 'toggle-sidebar', label: 'Toggle Sidebar', keys: 'Ctrl+Shift+L', category: 'global', description: 'Show or hide the sidebar' },
+  { id: 'toggle-sidebar', label: 'Toggle Sidebar', keys: 'Cmd+Shift+L', category: 'global', description: 'Show or hide the sidebar' },
   { id: 'escape', label: 'Close / Dismiss', keys: 'Esc', category: 'global', description: 'Close any open modal or command palette', suppressInInput: false },
 
   // ── Navigation (no-modifier single keys) ──
@@ -44,7 +44,6 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'nav-habits', label: 'Go to Habits', keys: 'H', category: 'global', description: 'Navigate to Habits', suppressInInput: true },
   { id: 'nav-reports', label: 'Go to Reports', keys: 'R', category: 'global', description: 'Navigate to Reports', suppressInInput: true },
   { id: 'nav-calendar', label: 'Go to Tasks', keys: 'C', category: 'global', description: 'Navigate to Tasks/Calendar', suppressInInput: true },
-  { id: 'nav-settings', label: 'Go to Timer Settings', keys: 'T', category: 'global', description: 'Navigate to Settings (Timer tab)', suppressInInput: true },
 
   // ── Dashboard ──
   { id: 'dash-log-time', label: 'Log Study Time', keys: 'N', category: 'dashboard', description: 'Open log study time modal', suppressInInput: true, routes: ['/'] },
