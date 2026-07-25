@@ -3,28 +3,32 @@ import { useState, useEffect, useCallback } from 'react'
 export interface WidgetConfig {
   id: string
   label: string
-  size: 'small' | 'medium' | 'large'
+  cols: number
+  rows: number
   order: number
 }
 
+export const MIN_WIDGET_COLS = 1
+export const MAX_WIDGET_COLS = 3
+export const MIN_WIDGET_ROWS = 1
+export const MAX_WIDGET_ROWS = 3
+
 export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
-  { id: 'stats',         label: 'Today & This Week' },
-  { id: 'today',        label: 'Today Overview' },
+  { id: 'today',        label: 'Today' },
   { id: 'streak-goal',  label: 'Study Streak & Daily Goal' },
   { id: 'pomodoro',     label: 'Study Timer' },
   { id: 'study-review', label: 'Study Review' },
   { id: 'calendar',     label: 'Study Calendar' },
   { id: 'recent',       label: 'Recent Sessions' },
-  { id: 'today-schedule', label: "Today's Schedule" },
   { id: 'assignments',  label: 'Upcoming Assignments' },
 ]
 
 export const DEFAULT_CONFIGS: Record<string, Omit<WidgetConfig, 'id' | 'label'>> = 
   DASHBOARD_WIDGETS_METADATA.reduce((acc, w, i) => {
-    let size: WidgetConfig['size'] = 'small'
-    if (w.id === 'stats' || w.id === 'today' || w.id === 'calendar' || w.id === 'recent') size = 'medium'
-    if (w.id === 'streak-goal') size = 'large'
-    acc[w.id] = { size, order: i }
+    let cols = 1, rows = 1
+    if (w.id === 'today' || w.id === 'calendar' || w.id === 'recent') { cols = 2; rows = 1 }
+    if (w.id === 'streak-goal') { cols = 2; rows = 2 }
+    acc[w.id] = { cols, rows, order: i }
     return acc
   }, {} as Record<string, Omit<WidgetConfig, 'id' | 'label'>>)
 export const DEFAULT_WIDGET_IDS = DASHBOARD_WIDGETS_METADATA.map((w) => w.id)
@@ -76,14 +80,15 @@ export function useDashboardWidgets() {
     })
   }, [])
 
-  const setWidgetSize = useCallback((id: string, size: WidgetConfig['size']) => {
-    setWidgetConfigs(prev => ({ ...prev, [id]: { ...prev[id], size } }))
+  const setWidgetSize = useCallback((id: string, cols: number, rows: number) => {
+    setWidgetConfigs(prev => ({ ...prev, [id]: { ...prev[id], cols: Math.max(MIN_WIDGET_COLS, Math.min(MAX_WIDGET_COLS, cols)), rows: Math.max(MIN_WIDGET_ROWS, Math.min(MAX_WIDGET_ROWS, rows)) } }))
   }, [])
-  const toggleWidgetSize = useCallback((id: string) => {
+  const cycleWidgetSize = useCallback((id: string) => {
     setWidgetConfigs(prev => {
-      const current = prev[id].size
-      const next = current === 'small' ? 'medium' : current === 'medium' ? 'large' : 'small'
-      return { ...prev, [id]: { ...prev[id], size: next } }
+      const current = prev[id]
+      const nextCols = current.cols >= MAX_WIDGET_COLS ? MIN_WIDGET_COLS : current.cols + 1
+      const nextRows = current.rows >= MAX_WIDGET_ROWS ? MIN_WIDGET_ROWS : current.rows + 1
+      return { ...prev, [id]: { ...prev[id], cols: nextCols, rows: nextRows } }
     })
   }, [])
 
@@ -94,7 +99,7 @@ export function useDashboardWidgets() {
     setWidgetConfigs,
     setWidgetConfig,
     setWidgetSize,
-    reorderWidgets,
-    toggleWidgetSize
+    cycleWidgetSize,
+    reorderWidgets
   }
 }

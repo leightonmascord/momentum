@@ -393,6 +393,9 @@ export default function SettingsPage() {
             <SettingsField label="High Contrast">
               <Toggle value={hcEnabled} onChange={() => toggleHC()} />
             </SettingsField>
+            <SettingsField label="Dev Build (Preview Mode)">
+              <Toggle value={!!settings.devMode} onChange={(v) => update({ devMode: v })} />
+            </SettingsField>
           </Card>
 
           <Card>

@@ -6,7 +6,7 @@ const TAGS: FocusTag[] = ['focused', 'distracted', 'group', 'revision']
 
 export function FocusTagSelector({ value, onChange }: { value: FocusTag | null; onChange: (tag: FocusTag | null) => void }) {
   return (
-    <div className="flex gap-1.5 mt-2">
+    <div className="flex flex-wrap gap-1.5 mt-2">
       {TAGS.map((tag) => (
         <button
           key={tag}

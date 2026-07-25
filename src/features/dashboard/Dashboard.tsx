@@ -536,6 +536,27 @@ export default function Dashboard() {
       case 'today':
         return (
           <Card>
+            <div className="mb-4 grid grid-cols-2 gap-4 border-b border-slate-200 pb-3 dark:border-slate-700">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Today</div>
+                <div className="mt-0.5 text-2xl font-bold text-slate-800 dark:text-slate-100">
+                  {formatTotalToday(liveTotalTodayMinutes, isTimerActive())}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">This Week</div>
+                <div className="mt-0.5 text-2xl font-bold text-slate-800 dark:text-slate-100">
+                  {(() => {
+                    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7)
+                    const weekAgoStr = format(weekAgo, 'yyyy-MM-dd')
+                    const weekMins = academicSessions
+                      .filter((s) => s.startAt >= weekAgoStr + 'T00:00:00')
+                      .reduce((sum, s) => sum + s.durationMinutes, 0)
+                    return formatMinutes(weekMins)
+                  })()}
+                </div>
+              </div>
+            </div>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-8">
               <div className="min-w-0 flex-1">
                 <div className="mb-2 flex items-center justify-between">

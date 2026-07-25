@@ -749,6 +749,7 @@ export function PomodoroTimer() {
     simpleSafetyFiredRef.current = false
     setSafetyMessage('')
     setTimerNotes('')
+    localStorage.removeItem('momentum-timer-notes')
   }
 
   async function changeSubject(newSubjectId: string) {
@@ -939,6 +940,7 @@ export function PomodoroTimer() {
     setPomCycles(0)
     setPomSeconds(config.focusMinutes * 60)
     setTimerNotes('')
+    localStorage.removeItem('momentum-timer-notes')
   }
   function discardSession() {
     setSimpleStartedAt(null)
@@ -954,6 +956,7 @@ export function PomodoroTimer() {
     clearTimerState()
     setTimerFocusTag(null)
     setTimerNotes('')
+    localStorage.removeItem('momentum-timer-notes')
   }
 
   const currentSeconds = mode === 'simple' ? simpleSeconds : pomSeconds
@@ -1201,7 +1204,7 @@ export function PomodoroTimer() {
               <label className="label">Focus Area</label>
               <select
                 className="input"
-                value={subjectId}
+                value={selectedParentId}
                 onChange={(e) => { setSubjectId(e.target.value); setProjectId(''); setTaskId('') }}
               >
                 <option value="">— Select focus area —</option>
