@@ -18,18 +18,6 @@ export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
   { id: 'today-schedule', label: "Today's Schedule" },
   { id: 'assignments',  label: 'Upcoming Assignments' },
 ]
-with:
-export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
-  { id: 'stats',         label: 'Today & This Week' },
-  { id: 'today',        label: 'Today Overview' },
-  { id: 'streak-goal',  label: 'Study Streak & Daily Goal' },
-  { id: 'pomodoro',     label: 'Study Timer' },
-  { id: 'study-review', label: 'Study Review' },
-  { id: 'calendar',     label: 'Study Calendar' },
-  { id: 'recent',       label: 'Recent Sessions' },
-  { id: 'today-schedule', label: "Today's Schedule" },
-  { id: 'assignments',  label: 'Upcoming Assignments' },
-]
 
 export const DEFAULT_CONFIGS: Record<string, Omit<WidgetConfig, 'id' | 'label'>> = 
   DASHBOARD_WIDGETS_METADATA.reduce((acc, w, i) => {

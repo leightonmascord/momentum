@@ -136,6 +136,7 @@ export default function QuickTimer() {
     await updateRoutineLogsForSession(session)
     await updateStreakDayForSession(session)
     setFocusTag(null)
+    setLabel('')
     await loadData()
   }
 

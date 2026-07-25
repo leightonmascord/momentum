@@ -26,6 +26,7 @@ import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS } from '../../lib/use-dashboard-widgets'
+import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 
 const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
@@ -35,12 +36,12 @@ function copySessionInfo(session: Session & { subjectName: string }) {
   const src = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   navigator.clipboard.writeText(`${session.subjectName} · ${formatMinutes(session.durationMinutes)} · ${time} · ${src}`).catch(() => {})
 }
-
 function SessionRow({
   session, project, menuSessionId, setMenuSessionId,
   setEditLog, setEditDuration, setEditDate, setEditSubjectId,
   deleteSession,
   selected, onToggleSelect, selectionMode,
+  setViewSession, setViewModalOpen,
 }: {
   session: Session & { subjectName: string; subjectColor: string }
   project: { name: string } | undefined
@@ -54,19 +55,20 @@ function SessionRow({
   selected: boolean
   onToggleSelect: (id: string) => void
   selectionMode: boolean
+  setViewSession: (s: Session | null) => void
+  setViewModalOpen: (open: boolean) => void
 }) {
   const swipe = useSwipe({
     onSwipeLeft: () => deleteSession(session.id),
     onSwipeRight: () => {
-      setEditLog(session)
-      setEditDuration(session.durationMinutes)
-      setEditDate(toLocalDateString(session.startAt))
-      setEditSubjectId(session.subjectId)
+      setViewSession(session)
+      setViewModalOpen(true)
     },
   })
   const srcLabel = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   return (
     <ContextMenu items={[
+      { label: 'View', action: () => { setViewSession(session); setViewModalOpen(true) } },
       { label: 'Edit', action: () => { setEditLog(session); setEditDuration(session.durationMinutes); setEditDate(toLocalDateString(session.startAt)); setEditSubjectId(session.subjectId) } },
       { label: 'Copy', action: () => copySessionInfo(session) },
       { label: 'Delete', action: () => deleteSession(session.id), danger: true },
@@ -75,10 +77,8 @@ function SessionRow({
         key={session.id}
         className="flex items-center justify-between py-2"
         onDoubleClick={() => {
-          setEditLog(session)
-          setEditDuration(session.durationMinutes)
-          setEditDate(toLocalDateString(session.startAt))
-          setEditSubjectId(session.subjectId)
+          setViewSession(session)
+          setViewModalOpen(true)
         }}
         {...swipe}
       >
@@ -96,7 +96,7 @@ function SessionRow({
             <div className="space-y-1 text-sm">
               <div className="font-medium">{session.subjectName}</div>
               {project && <div className="text-slate-500">{project.name}</div>}
-              <div className="text-slate-500">{format(new Date(session.startAt), 'h:mm a')} · {formatMinutes(session.durationMinutes)}</div>
+              <div className="text-slate-500">{session.noTime ? 'no time' : format(new Date(session.startAt), 'h:mm a')} · {formatMinutes(session.durationMinutes)}</div>
               <div className="text-slate-500">Source: {srcLabel}</div>
               {session.note && <div className="text-slate-400 italic">{session.note}</div>}
             </div>
@@ -106,7 +106,7 @@ function SessionRow({
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: session.subjectColor }} />
             <div className="min-w-0">
               <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{session.subjectName}{project && <span className="text-slate-500"> · {project.name}</span>}</div>
-              <div className="text-xs text-slate-500">{format(new Date(session.startAt), 'h:mm a')}{session.source === 'timer' ? ' ⏱' : session.source === 'pomodoro' ? ' 🍅' : ' ✏️'}</div>
+              <div className="text-xs text-slate-500">{session.noTime ? '(no time)' : format(new Date(session.startAt), 'h:mm a')}{session.source === 'timer' ? ' ⏱' : session.source === 'pomodoro' ? ' 🍅' : ' ✏️'}</div>
             </div>
           </div>
         </HoverCard>
@@ -232,15 +232,16 @@ export default function Dashboard() {
   const [logTaskId, setLogTaskId] = useState(persistedForm?.taskId ?? '')
   const [logDuration, setLogDuration] = useState(persistedForm?.duration ?? 30)
   const [logDate, setLogDate] = useState(persistedForm?.date ?? todayStr)
+  const [logTime, setLogTime] = useState(persistedForm?.time ?? '')
   const [logNote, setLogNote] = useState(persistedForm?.note ?? '')
   const [logFocusTag, setLogFocusTag] = useState<Session['focusTag'] | null>(persistedForm?.focusTag ?? null)
 
   useEffect(() => {
     sessionStorage.setItem(LOG_FORM_KEY, JSON.stringify({
       subjectId: logSubjectId, projectId: logProjectId, taskId: logTaskId,
-      duration: logDuration, date: logDate, note: logNote, focusTag: logFocusTag,
+      duration: logDuration, date: logDate, time: logTime, note: logNote, focusTag: logFocusTag,
     }))
-  }, [logSubjectId, logProjectId, logTaskId, logDuration, logDate, logNote, logFocusTag])
+  }, [logSubjectId, logProjectId, logTaskId, logDuration, logDate, logTime, logNote, logFocusTag])
 
   // Close FAB on click outside or Escape
   useEffect(() => {
@@ -260,27 +261,33 @@ export default function Dashboard() {
       document.removeEventListener('keydown', onKey)
     }
   }, [fabOpen])
-
   async function handleLogTime() {
     if (logDuration < 1) {
       alert('Duration must be at least 1 minute')
       return
     }
     const note = logNote.trim()
-    // Use noon local time on the selected date so the ISO instant always
-    // round-trips back to the same calendar date regardless of timezone
-    // (midnight shifts a day back in UTC, current-time shifts unpredictably).
     const [y, m, d] = logDate.split('-').map(Number)
-    const startAt = new Date(y, m - 1, d, 12, 0, 0, 0).toISOString()
-    const endAt = new Date(y, m - 1, d, 12, 0, logDuration * 60, 0).toISOString()
-
+    let startAt: string
+    let endAt: string
+    let noTime = false
+    if (logTime) {
+      const [h, mm] = logTime.split(':').map(Number)
+      const start = new Date(y, m - 1, d, h, mm, 0, 0)
+      startAt = start.toISOString()
+      endAt = new Date(start.getTime() + logDuration * 60_000).toISOString()
+    } else {
+      startAt = new Date(y, m - 1, d, 12, 0, 0, 0).toISOString()
+      endAt = new Date(y, m - 1, d, 12, logDuration, 0, 0).toISOString()
+      noTime = true
+    }
     if (!logSubjectId && !logProjectId) return
     const project = logProjectId ? data.projects.find((p) => p.id === logProjectId) : undefined
     const task = logTaskId ? data.assignments.find((a) => a.id === logTaskId) : undefined
     const actualSubjectId = project ? project.subjectId : logSubjectId
     if (!actualSubjectId) return
     const taskNote = note || (task ? `Task: ${task.title}` : undefined)
-    const session = {
+    const session: Session = {
       id: uuid(),
       subjectId: actualSubjectId,
       projectId: project?.id ?? null,
@@ -293,6 +300,7 @@ export default function Dashboard() {
       source: 'quickLog' as const,
       createdAt: isoNow(),
       updatedAt: isoNow(),
+      noTime
     }
     await db.sessions.add(session)
     const subjectName = data.subjects.find((s) => s.id === actualSubjectId)?.name ?? 'Unknown Subject'
@@ -311,13 +319,15 @@ export default function Dashboard() {
     setLogSubjectId('')
     setLogProjectId('')
     setLogTaskId('')
+    setLogTime('')
     setLogNote('')
     setLogFocusTag(null)
   }
-
   const [editLog, setEditLog] = useState<Session | null>(null)
   const [editDuration, setEditDuration] = useState(30)
   const [editDate, setEditDate] = useState(todayStr)
+  const [viewSession, setViewSession] = useState<Session | null>(null)
+  const [viewModalOpen, setViewModalOpen] = useState(false)
   const [liveTimerSeconds, setLiveTimerSeconds] = useState(0)
   const [liveTimerSubjectId, setLiveTimerSubjectId] = useState<string | null>(null)
   useEffect(() => {
@@ -940,6 +950,8 @@ export default function Dashboard() {
                               selected={selectedSessionIds.has(session.id)}
                               onToggleSelect={(id) => setSelectedSessionIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })}
                               selectionMode={selectionMode || selectedSessionIds.size > 0}
+                              setViewSession={setViewSession}
+                              setViewModalOpen={setViewModalOpen}
                             />
                           )
                         })}
@@ -1354,6 +1366,10 @@ export default function Dashboard() {
               <label className="label">Date</label>
               <input type="date" className="input" max={todayStr} value={logDate} onChange={(e) => setLogDate(e.target.value)} />
             </div>
+            <div>
+              <label className="label">Time (optional)</label>
+              <input type="time" className="input" value={logTime} onChange={(e) => setLogTime(e.target.value)} />
+            </div>
             <div className="flex-1">
               <label className="label">Note (optional)</label>
               <input className="input w-full" placeholder="What did you work on?" value={logNote} onChange={(e) => setLogNote(e.target.value)} />
@@ -1459,6 +1475,13 @@ export default function Dashboard() {
           })}
         </div>
       )}
+      <SessionDetailsModal
+        session={viewSession}
+        open={viewModalOpen}
+        onClose={() => { setViewModalOpen(false); setViewSession(null) }}
+        subjectName={viewSession ? data.subjects.find((s) => s.id === viewSession.subjectId)?.name : undefined}
+        projectName={viewSession?.projectId ? data.projects.find((p) => p.id === viewSession.projectId)?.name : undefined}
+      />
     </div>
   )
 }

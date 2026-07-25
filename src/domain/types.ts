@@ -59,6 +59,7 @@ export interface Session {
   updatedAt: string
   deletedAt?: string | null
   focusTag?: 'focused' | 'distracted' | 'group' | 'revision'
+  noTime?: boolean
 }
 
 export interface ProgressLog {
