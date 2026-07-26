@@ -119,13 +119,17 @@ export function FreeformWidget({
       </div>
       {/* Body */}
       <div className="p-3 flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
-      {/* Resize handle */}
+      {/* Resize handle — large, visible corner with three diagonal grip lines */}
       <div
         onPointerDown={onResizePointerDown}
-        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize group"
+        className="absolute bottom-1 right-1 flex h-6 w-6 cursor-se-resize items-end justify-end rounded border border-slate-200/80 bg-white/90 p-0.5 shadow-sm hover:border-primary-400 hover:bg-white dark:border-slate-600 dark:bg-slate-800/90 dark:hover:border-primary-400"
         aria-label="Resize widget"
+        title="Drag to resize"
       >
-        <div className="absolute bottom-1 right-1 w-2.5 h-2.5 border-b-2 border-r-2 border-slate-300 dark:border-slate-500 opacity-50 group-hover:opacity-100 transition-opacity" />
+        <svg viewBox="0 0 12 12" className="h-3 w-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M11 4 4 11" />
+          <path d="M11 8 8 11" />
+        </svg>
       </div>
     </div>
   )

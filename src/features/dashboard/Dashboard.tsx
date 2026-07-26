@@ -146,7 +146,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, cycleWidgetSize } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -1246,7 +1246,12 @@ export default function Dashboard() {
                 const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
                   <div key={id} className={cn(colClass, 'h-full')}>
-                    <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
+                    <SortableWidget
+                      id={id}
+                      label={label}
+                      onRemove={() => removeWidgetWithUndo(id)}
+                      onCycleSize={() => cycleWidgetSize(id)}
+                    >
                       {renderWidget(id)}
                     </SortableWidget>
                   </div>
