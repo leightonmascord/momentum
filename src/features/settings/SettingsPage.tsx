@@ -9,7 +9,6 @@ import { useAuth } from '../../app/auth-provider'
 import { downloadBackup, readBackupFile, importBackup, ImportMode } from '../../lib/backup'
 import type { BackupPayload } from '../../lib/backup'
 import { pushSettings } from '../../lib/settings-sync'
-import { forcePullAllData } from '../../lib/data-sync'
 import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
 import { requestNotificationPermission } from '../../lib/notification-service'
@@ -101,33 +100,85 @@ function DataRecovery() {
   const { user } = useAuth()
   const { loadData } = useData()
   const [recovering, setRecovering] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [diag, setDiag] = useState<{ totalRecords: number; tables: Record<string, { cloud: number; local: number }> } | null>(null)
+  const [error, setError] = useState('')
+  async function checkCloud() {
+    if (!user?.uid) return
+    setChecking(true)
+    setError('')
+    try {
+      const { checkCloudState } = await import('../../lib/data-sync')
+      const state = await checkCloudState(user.uid)
+      setDiag(state)
+      if (state.error) setError(state.error)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setChecking(false)
+    }
+  }
+  async function doForcePull() {
+    if (!user?.uid) return
+    setRecovering(true)
+    setError('')
+    try {
+      const { forcePullAllData } = await import('../../lib/data-sync')
+      const total = await forcePullAllData(user.uid)
+      await loadData()
+      setRecovering(false)
+      alert(`Recovery complete! Pulled ${total} records from cloud.`)
+      // Re-check after recovery
+      const { checkCloudState } = await import('../../lib/data-sync')
+      const state = await checkCloudState(user.uid)
+      setDiag(state)
+    } catch (e) {
+      setError(String(e))
+      setRecovering(false)
+    }
+  }
   return (
     <Card>
       <CardHeader>
         <CardTitle>Data Recovery</CardTitle>
       </CardHeader>
       <p className="text-sm text-slate-500 dark:text-slate-400">
-        If your study data seems missing, you can force a re-pull from the cloud.
-        This will merge all available records from your cloud backup.
+        If your study data seems missing, check cloud status and force a re-pull.
       </p>
-      <div className="mt-3">
-        <Button variant="danger" size="sm" onClick={async () => {
-          if (!user?.uid) return
-          setRecovering(true)
-          try {
-            await forcePullAllData(user.uid)
-            await loadData()
-            alert('Data recovery complete!')
-          } catch (e) {
-            console.error(e)
-            alert('Data recovery failed.')
-          } finally {
-            setRecovering(false)
-          }
-        }}>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="secondary" size="sm" onClick={checkCloud} disabled={checking}>
+          {checking ? 'Checking...' : 'Check Cloud Status'}
+        </Button>
+        <Button variant="danger" size="sm" onClick={doForcePull} disabled={recovering}>
           {recovering ? 'Recovering...' : 'Force Re-pull from Cloud'}
         </Button>
       </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {diag && (
+        <div className="mt-3 rounded border border-slate-200 dark:border-slate-700">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                <th className="px-2 py-1 text-left">Table</th>
+                <th className="px-2 py-1 text-right">Cloud</th>
+                <th className="px-2 py-1 text-right">Local</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(diag.tables).map(([key, { cloud, local }]) => (
+                <tr key={key} className="border-b border-slate-100 dark:border-slate-800">
+                  <td className="px-2 py-1 font-mono">{key}</td>
+                  <td className="px-2 py-1 text-right">{cloud}</td>
+                  <td className="px-2 py-1 text-right">{local}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-2 py-1 text-xs text-slate-500">
+            Total records in cloud: <strong>{diag.totalRecords}</strong>
+          </div>
+        </div>
+      )}
     </Card>
   )
 }

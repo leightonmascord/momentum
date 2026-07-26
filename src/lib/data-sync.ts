@@ -136,6 +136,37 @@ export async function forcePullAllData(uid: string): Promise<number> {
   return total
 }
 
+export interface CloudState {
+  totalRecords: number
+  tables: Record<string, { cloud: number; local: number }>
+  error?: string
+}
+
+/** Diagnostic: compare local vs cloud record counts per table. */
+export async function checkCloudState(uid: string): Promise<CloudState> {
+  const result: CloudState = { totalRecords: 0, tables: {} }
+  if (!isFirebaseConfigured || !firestore) {
+    result.error = 'Firebase not configured'
+    return result
+  }
+  for (const tableKey of SYNC_TABLES) {
+    try {
+      const localCount = await localDb.table(tableKey).count()
+      const snap = await getDoc(doc(firestore, DATA_COLLECTION, `${uid}_${tableKey}`))
+      let cloudCount = 0
+      if (snap.exists()) {
+        const cloudDoc = snap.data() as CloudTableDoc
+        if (Array.isArray(cloudDoc.records)) cloudCount = cloudDoc.records.length
+      }
+      result.tables[tableKey] = { cloud: cloudCount, local: localCount }
+      result.totalRecords += cloudCount
+    } catch (e) {
+      console.warn(`Failed to check ${tableKey}:`, e)
+    }
+  }
+  return result
+}
+
 
 // ────────── Push: local Dexie → Firestore ──────────
 
