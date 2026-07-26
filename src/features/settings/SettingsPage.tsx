@@ -139,21 +139,24 @@ function DataRecovery() {
   }
   async function doUndelete() {
     if (!user?.uid) return
-    if (!confirm('Undelete ALL soft-deleted records in this database? This will clear the deletedAt field on every record. The records will reappear in the UI immediately.')) return
+    if (!confirm('Undelete ALL soft-deleted records in this database?')) return
     setRecovering(true)
     setError('')
     try {
       const { undeleteAllData } = await import('../../lib/data-sync')
       const total = await undeleteAllData(user.uid)
+      console.log(`[undelete] Restored ${total} records`)
       await loadData()
       setRecovering(false)
-      alert(`Undelete complete! ${total} records restored.`)
+      alert(`Undelete complete! ${total} records restored. Navigate to Dashboard or Subjects to see them.`)
       if (user?.uid) {
         const { checkCloudState } = await import('../../lib/data-sync')
         const state = await checkCloudState(user.uid)
         setDiag(state)
+        console.log('[undelete] Post-undelete diagnostic:', state)
       }
     } catch (e) {
+      console.error('[undelete] Failed:', e)
       setError(String(e))
       setRecovering(false)
     }
@@ -175,6 +178,27 @@ function DataRecovery() {
         </Button>
         <Button variant="primary" size="sm" onClick={doUndelete} disabled={recovering}>
           {recovering ? 'Working...' : 'Undelete All'}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={async () => {
+          const { db } = await import('../../db/app-db')
+          const subjCount = await db.subjects.count()
+          const catsCount = await db.categories.count()
+          const marksCount = await db.marks.count()
+          const projsCount = await db.projects.count()
+          const sessionsCount = await db.sessions.count()
+          const subjSample = await db.subjects.limit(3).toArray()
+          console.log('[diag] Local DB counts:', { subjects: subjCount, categories: catsCount, marks: marksCount, projects: projsCount, sessions: sessionsCount })
+          console.log('[diag] Subject sample:', subjSample)
+          alert(`Local DB: ${subjCount} subjects, ${catsCount} categories, ${marksCount} marks, ${projsCount} projects, ${sessionsCount} sessions.\nSample subjects: ${subjSample.map((s: any) => s.name).join(', ') || 'none'}`)
+        }}>
+          Check Local DB
+        </Button>
+        <Button variant="secondary" size="sm" onClick={async () => {
+          // Force full reload of data into React context
+          await loadData()
+          alert('Data reloaded from local DB.')
+        }}>
+          Force Reload UI
         </Button>
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
