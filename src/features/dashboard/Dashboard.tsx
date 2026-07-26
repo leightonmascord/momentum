@@ -537,10 +537,14 @@ export default function Dashboard() {
   // Log time shortcut (Cmd+L or N on dashboard)
   useEffect(() => {
     function onLogTime() { setLogModalOpen(true) }
+    function onCustomise() { setCustomizeOpen(true) }
     window.addEventListener('momentum:log-time', onLogTime)
-    return () => window.removeEventListener('momentum:log-time', onLogTime)
+    window.addEventListener('momentum:dashboard-customise', onCustomise)
+    return () => {
+      window.removeEventListener('momentum:log-time', onLogTime)
+      window.removeEventListener('momentum:dashboard-customise', onCustomise)
+    }
   }, [])
-
   // Widget toggle shortcuts (1-8)
   useEffect(() => {
     function onToggle(e: Event) {

@@ -238,6 +238,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
         case 'dash-log-time':
           window.dispatchEvent(new CustomEvent('momentum:log-time'))
           break
+        case 'dash-customise':
+          window.dispatchEvent(new CustomEvent('momentum:dashboard-customise'))
+          break
         case 'dash-widget-1': case 'dash-widget-2': case 'dash-widget-3': case 'dash-widget-4':
         case 'dash-widget-5': case 'dash-widget-6': case 'dash-widget-7': case 'dash-widget-8': {
           const idx = parseInt(shortcut.id.replace('dash-widget-', ''), 10)

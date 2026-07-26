@@ -47,6 +47,7 @@ export const SHORTCUTS: Shortcut[] = [
 
   // ── Dashboard ──
   { id: 'dash-log-time', label: 'Log Study Time', keys: 'N', category: 'dashboard', description: 'Open log study time modal', suppressInInput: true, routes: ['/'] },
+  { id: 'dash-customise', label: 'Customise Dashboard', keys: 'C', category: 'dashboard', description: 'Open the dashboard customise dialog', suppressInInput: true, routes: ['/'] },
   { id: 'dash-widget-1', label: 'Toggle Widget 1', keys: '1', category: 'dashboard', description: 'Toggle first widget visibility', suppressInInput: true, routes: ['/'] },
   { id: 'dash-widget-2', label: 'Toggle Widget 2', keys: '2', category: 'dashboard', description: 'Toggle second widget visibility', suppressInInput: true, routes: ['/'] },
   { id: 'dash-widget-3', label: 'Toggle Widget 3', keys: '3', category: 'dashboard', description: 'Toggle third widget visibility', suppressInInput: true, routes: ['/'] },
@@ -57,7 +58,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'dash-widget-8', label: 'Toggle Widget 8', keys: '8', category: 'dashboard', description: 'Toggle eighth widget visibility', suppressInInput: true, routes: ['/'] },
   { id: 'dash-cal-prev', label: 'Previous Month', keys: '←', category: 'dashboard', description: 'Navigate calendar to previous month', suppressInInput: true, routes: ['/'] },
   { id: 'dash-cal-next', label: 'Next Month', keys: '→', category: 'dashboard', description: 'Navigate calendar to next month', suppressInInput: true, routes: ['/'] },
-
+  { id: 'dash-cal-today', label: 'Today', keys: 'T', category: 'dashboard', description: 'Jump calendar to today', suppressInInput: true, routes: ['/'] },
   // ── Subjects ──
   { id: 'subj-add', label: 'Add Focus Area', keys: 'N', category: 'subjects', description: 'Add a new focus area', suppressInInput: true, routes: ['/subjects'] },
   { id: 'subj-edit', label: 'Edit Focus Area', keys: 'E', category: 'subjects', description: 'Edit selected focus area', suppressInInput: true, routes: ['/subjects'] },
