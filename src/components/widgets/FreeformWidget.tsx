@@ -40,23 +40,26 @@ export function FreeformWidget({
     isDragging,
   } = useSortable({ id })
 
-  const resizeRef = useRef<{ startX: number; startY: number; origCols: number; origH: number; widthPerStep: number } | null>(null)
+  const resizeRef = useRef<{ startX: number; startY: number; origCols: number; origH: number; widthPerStep: number; heightPerStep: number } | null>(null)
   const surfaceRef = useRef<HTMLDivElement | null>(null)
 
   const onResizePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    const grid = surfaceRef.current?.closest('[data-tour="freeform-area"]') as HTMLElement | null
-    const gridWidth = grid?.clientWidth ?? 0
-    const widthPerStep = gridWidth > 0 ? gridWidth / 3 : 280
-    resizeRef.current = { startX: e.clientX, startY: e.clientY, origCols: cols, origH: minHeight, widthPerStep }
+    // Use a fixed step so small drags produce visible changes regardless of
+    // grid width. The grid is fluid; using gridWidth / 3 makes the handle
+    // feel sluggish on wide viewports and frantic on narrow ones.
+    const widthPerStep = 220
+    const heightPerStep = 24
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, origCols: cols, origH: minHeight, widthPerStep, heightPerStep }
     const onMove_ = (ev: PointerEvent) => {
       if (!resizeRef.current) return
       const dx = ev.clientX - resizeRef.current.startX
       const dy = ev.clientY - resizeRef.current.startY
       const deltaCols = Math.round(dx / resizeRef.current.widthPerStep)
+      const deltaRows = Math.round(dy / resizeRef.current.heightPerStep)
       const nextCols = Math.max(MIN_WIDGET_COLS, Math.min(MAX_WIDGET_COLS, resizeRef.current.origCols + deltaCols))
-      const nextHeight = Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, resizeRef.current.origH + dy))
+      const nextHeight = Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, resizeRef.current.origH + deltaRows * resizeRef.current.heightPerStep))
       onResize({ cols: nextCols, minHeight: nextHeight })
     }
     const onUp_ = () => {

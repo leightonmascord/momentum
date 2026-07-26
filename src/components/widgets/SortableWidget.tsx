@@ -34,15 +34,14 @@ export function SortableWidget({
 
   const resizeRef = useRef<{ startX: number; origCols: number; widthPerCol: number } | null>(null)
   const surfaceRef = useRef<HTMLDivElement | null>(null)
-
   const onResizePointerDown = (e: React.PointerEvent) => {
     if (!onResize || cols === undefined) return
     e.preventDefault()
     e.stopPropagation()
-    const surface = surfaceRef.current?.parentElement
-    const surfaceWidth = surface?.clientWidth ?? 0
-    // Each column is roughly 1/3 of the surface (lg breakpoint).
-    const widthPerCol = surfaceWidth / 3 || 200
+    // Fixed step (220px per col) so the handle feels consistent regardless of
+    // viewport. The grid is fluid; using surfaceWidth / 3 made the widget
+    // appear to widen during drag and snap back on release.
+    const widthPerCol = 220
     resizeRef.current = { startX: e.clientX, origCols: cols, widthPerCol }
     const onMove = (ev: PointerEvent) => {
       if (!resizeRef.current) return
@@ -115,10 +114,17 @@ export function SortableWidget({
       {onResize && (
         <div
           onPointerDown={onResizePointerDown}
-          className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-primary-100/40 dark:hover:bg-primary-900/30"
+          className="absolute right-0 top-1/2 -translate-y-1/2 flex h-12 w-3 cursor-ew-resize items-center justify-center rounded-l border border-r-0 border-slate-200 bg-white/80 text-slate-400 shadow-sm hover:border-primary-400 hover:bg-primary-50 hover:text-primary-600 dark:border-slate-600 dark:bg-slate-800/80 dark:hover:border-primary-400 dark:hover:bg-slate-700"
           aria-label="Resize widget width"
           title={`Drag to resize (${cols ?? 1}/${MAX_WIDGET_COLS} columns)`}
-        />
+        >
+          <svg viewBox="0 0 8 12" className="h-3 w-1.5" fill="currentColor">
+            <circle cx="2" cy="3" r="1" />
+            <circle cx="6" cy="3" r="1" />
+            <circle cx="2" cy="9" r="1" />
+            <circle cx="6" cy="9" r="1" />
+          </svg>
+        </div>
       )}
     </div>
   )
