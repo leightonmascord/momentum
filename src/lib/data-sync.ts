@@ -138,7 +138,7 @@ export async function forcePullAllData(uid: string): Promise<number> {
 
 export interface CloudState {
   totalRecords: number
-  tables: Record<string, { cloud: number; local: number }>
+  tables: Record<string, { cloud: number; local: number; deleted?: number }>
   error?: string
 }
 
@@ -151,14 +151,16 @@ export async function checkCloudState(uid: string): Promise<CloudState> {
   }
   for (const tableKey of SYNC_TABLES) {
     try {
-      const localCount = await localDb.table(tableKey).count()
+      const rows = await localDb.table(tableKey).toArray() as Array<{ deletedAt?: string | null }>
+      const localCount = rows.length
+      const deletedCount = rows.filter((r) => !!r.deletedAt).length
       const snap = await getDoc(doc(firestore, DATA_COLLECTION, `${uid}_${tableKey}`))
       let cloudCount = 0
       if (snap.exists()) {
         const cloudDoc = snap.data() as CloudTableDoc
         if (Array.isArray(cloudDoc.records)) cloudCount = cloudDoc.records.length
       }
-      result.tables[tableKey] = { cloud: cloudCount, local: localCount }
+      result.tables[tableKey] = { cloud: cloudCount, local: localCount, deleted: deletedCount }
       result.totalRecords += cloudCount
     } catch (e) {
       console.warn(`Failed to check ${tableKey}:`, e)

@@ -101,7 +101,7 @@ function DataRecovery() {
   const { loadData } = useData()
   const [recovering, setRecovering] = useState(false)
   const [checking, setChecking] = useState(false)
-  const [diag, setDiag] = useState<{ totalRecords: number; tables: Record<string, { cloud: number; local: number }> } | null>(null)
+  const [diag, setDiag] = useState<{ totalRecords: number; tables: Record<string, { cloud: number; local: number; deleted?: number }> } | null>(null)
   const [error, setError] = useState('')
   async function checkCloud() {
     if (!user?.uid) return
@@ -162,20 +162,23 @@ function DataRecovery() {
                 <th className="px-2 py-1 text-left">Table</th>
                 <th className="px-2 py-1 text-right">Cloud</th>
                 <th className="px-2 py-1 text-right">Local</th>
+                <th className="px-2 py-1 text-right">Deleted</th>
               </tr>
             </thead>
             <tbody>
-              {Object.entries(diag.tables).map(([key, { cloud, local }]) => (
+              {Object.entries(diag.tables).map(([key, { cloud, local, deleted }]) => (
                 <tr key={key} className="border-b border-slate-100 dark:border-slate-800">
                   <td className="px-2 py-1 font-mono">{key}</td>
                   <td className="px-2 py-1 text-right">{cloud}</td>
                   <td className="px-2 py-1 text-right">{local}</td>
+                  <td className="px-2 py-1 text-right">{deleted ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div className="px-2 py-1 text-xs text-slate-500">
-            Total records in cloud: <strong>{diag.totalRecords}</strong>
+            Total records in cloud: <strong>{diag.totalRecords}</strong>.
+            'Deleted' = records with <code>deletedAt</code> set (soft-deleted; hidden from UI).
           </div>
         </div>
       )}
