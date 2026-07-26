@@ -7,7 +7,6 @@ interface SortableWidgetProps {
   id: string
   label: string
   onRemove?: () => void
-  onCycleSize?: () => void
   children: ReactNode
   className?: string
 }
@@ -16,7 +15,6 @@ export function SortableWidget({
   id,
   label,
   onRemove,
-  onCycleSize,
   children,
   className,
 }: SortableWidgetProps) {
@@ -64,33 +62,18 @@ export function SortableWidget({
           </div>
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 select-none">{label}</h3>
         </div>
-        <div className="flex items-center gap-1">
-          {onCycleSize && (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onCycleSize() }}
-              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-              aria-label="Cycle widget size"
-              title="Cycle size (1 → 2 → 3 columns)"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
-              </svg>
-            </button>
-          )}
-          {onRemove && (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onRemove() }}
-              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-              aria-label="Remove widget"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
+        {onRemove && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onRemove() }}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+            aria-label="Remove widget"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="p-3">{children}</div>
     </div>

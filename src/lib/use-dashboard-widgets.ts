@@ -106,7 +106,7 @@ export function useDashboardWidgets() {
   }, [visibleWidgets, widgetConfigs, layoutMode])
 
   const setWidgetConfig = useCallback((id: string, config: Partial<Omit<WidgetConfig, 'id' | 'label'>>) => {
-    setWidgetConfigs(prev => ({ ...prev, [id]: { ...prev[id], ...config } }))
+    setWidgetConfigs(prev => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_CONFIGS[id]), ...config } }))
   }, [])
 
   const reorderWidgets = useCallback((fromId: string, toId: string) => {
@@ -122,14 +122,14 @@ export function useDashboardWidgets() {
   }, [])
 
   const setWidgetSize = useCallback((id: string, cols: number, rows: number) => {
-    setWidgetConfigs(prev => ({ ...prev, [id]: { ...prev[id], cols: Math.max(MIN_WIDGET_COLS, Math.min(MAX_WIDGET_COLS, cols)), rows: Math.max(MIN_WIDGET_ROWS, Math.min(MAX_WIDGET_ROWS, rows)) } }))
+    setWidgetConfigs(prev => ({ ...prev, [id]: { ...(prev[id] ?? DEFAULT_CONFIGS[id]), cols: Math.max(MIN_WIDGET_COLS, Math.min(MAX_WIDGET_COLS, cols)), rows: Math.max(MIN_WIDGET_ROWS, Math.min(MAX_WIDGET_ROWS, rows)) } }))
   }, [])
   const cycleWidgetSize = useCallback((id: string) => {
     setWidgetConfigs(prev => {
-      const current = prev[id]
+      const current = prev[id] ?? DEFAULT_CONFIGS[id]
+      if (!current) return prev
       const nextCols = current.cols >= MAX_WIDGET_COLS ? MIN_WIDGET_COLS : current.cols + 1
-      const nextRows = current.rows >= MAX_WIDGET_ROWS ? MIN_WIDGET_ROWS : current.rows + 1
-      return { ...prev, [id]: { ...prev[id], cols: nextCols, rows: nextRows } }
+      return { ...prev, [id]: { ...current, cols: nextCols } }
     })
   }, [])
 

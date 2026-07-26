@@ -146,7 +146,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, cycleWidgetSize } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -1224,13 +1224,23 @@ export default function Dashboard() {
 
   return (
     <div data-tour="dashboard" className="space-y-6">
-      <button
-        type="button"
-        className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-        onClick={() => setCustomizeOpen(true)}
-      >
-        Customise
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          onClick={() => setMode(layoutMode === 'grid' ? 'freeform' : 'grid')}
+          title={layoutMode === 'grid' ? 'Switch to freeform (drag to resize widgets)' : 'Switch to grid layout'}
+        >
+          {layoutMode === 'grid' ? '⬡ Freeform' : '⊞ Grid'}
+        </button>
+        <button
+          type="button"
+          className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          onClick={() => setCustomizeOpen(true)}
+        >
+          Customise
+        </button>
+      </div>
       {/* Dashboard grid with widgets */}
       {showActivityConfirmation && (
         <ActivityConfirmationCard onDismiss={() => setShowActivityConfirmation(false)} />
@@ -1246,12 +1256,7 @@ export default function Dashboard() {
                 const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
                   <div key={id} className={cn(colClass, 'h-full')}>
-                    <SortableWidget
-                      id={id}
-                      label={label}
-                      onRemove={() => removeWidgetWithUndo(id)}
-                      onCycleSize={() => cycleWidgetSize(id)}
-                    >
+                    <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
                       {renderWidget(id)}
                     </SortableWidget>
                   </div>
