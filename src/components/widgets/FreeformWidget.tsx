@@ -2,16 +2,15 @@ import { useRef, useCallback, ReactNode } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { cn } from '../../lib/utils'
-import { MIN_WIDGET_PX_H, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
+import { MIN_WIDGET_COLS, MAX_WIDGET_COLS, MIN_WIDGET_PX_H, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
 
 interface FreeformWidgetProps {
   id: string
   label: string
   cols: number
   minHeight: number
-  onResize: (minHeight: number) => void
+  onResize: (next: { cols: number; minHeight: number }) => void
   onRemove?: () => void
-  onColsChange?: (cols: number) => void
   children: ReactNode
   className?: string
 }
@@ -29,7 +28,6 @@ export function FreeformWidget({
   minHeight,
   onResize,
   onRemove,
-  onColsChange,
   children,
   className,
 }: FreeformWidgetProps) {
@@ -42,17 +40,24 @@ export function FreeformWidget({
     isDragging,
   } = useSortable({ id })
 
-  const resizeRef = useRef<{ startY: number; origH: number } | null>(null)
+  const resizeRef = useRef<{ startX: number; startY: number; origCols: number; origH: number; widthPerStep: number } | null>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
 
   const onResizePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    resizeRef.current = { startY: e.clientY, origH: minHeight }
+    const grid = surfaceRef.current?.closest('[data-tour="freeform-area"]') as HTMLElement | null
+    const gridWidth = grid?.clientWidth ?? 0
+    const widthPerStep = gridWidth > 0 ? gridWidth / 3 : 280
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, origCols: cols, origH: minHeight, widthPerStep }
     const onMove_ = (ev: PointerEvent) => {
       if (!resizeRef.current) return
+      const dx = ev.clientX - resizeRef.current.startX
       const dy = ev.clientY - resizeRef.current.startY
-      const nh = Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, resizeRef.current.origH + dy))
-      onResize(nh)
+      const deltaCols = Math.round(dx / resizeRef.current.widthPerStep)
+      const nextCols = Math.max(MIN_WIDGET_COLS, Math.min(MAX_WIDGET_COLS, resizeRef.current.origCols + deltaCols))
+      const nextHeight = Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, resizeRef.current.origH + dy))
+      onResize({ cols: nextCols, minHeight: nextHeight })
     }
     const onUp_ = () => {
       resizeRef.current = null
@@ -61,7 +66,7 @@ export function FreeformWidget({
     }
     window.addEventListener('pointermove', onMove_)
     window.addEventListener('pointerup', onUp_)
-  }, [minHeight, onResize])
+  }, [cols, minHeight, onResize])
 
   const span = colSpanPx(cols)
 
@@ -102,48 +107,30 @@ export function FreeformWidget({
           </div>
           <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100 select-none">{label}</h3>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onColsChange && (
-            <select
-              value={cols}
-              onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) => onColsChange(Number(e.target.value))}
-              aria-label="Widget width"
-              title="Widget width"
-              className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-200"
-            >
-              <option value={1}>Narrow</option>
-              <option value={2}>Medium</option>
-              <option value={3}>Wide</option>
-            </select>
-          )}
-          {onRemove && (
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onRemove() }}
-              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-              aria-label="Remove widget"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
+        {onRemove && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onRemove() }}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+            aria-label="Remove widget"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
-      <div className="flex-1 p-3 overflow-auto">{children}</div>
-      {/* Bottom resize handle */}
+      <div ref={surfaceRef} className="flex-1 p-3 overflow-auto">{children}</div>
       <div
         onPointerDown={onResizePointerDown}
-        className="flex h-3 cursor-ns-resize items-center justify-center border-t border-slate-100 dark:border-slate-700/60 text-slate-300 hover:text-primary-500 dark:text-slate-600 dark:hover:text-primary-400"
-        aria-label="Resize widget height"
-        title="Drag to resize height"
+        className="absolute bottom-1 right-1 flex h-6 w-6 cursor-nwse-resize items-end justify-end rounded border border-slate-200/80 bg-white/90 p-0.5 shadow-sm hover:border-primary-400 hover:bg-white dark:border-slate-600 dark:bg-slate-800/90 dark:hover:border-primary-400"
+        aria-label="Resize widget"
+        title="Drag to resize width and height"
       >
-        <svg viewBox="0 0 24 12" className="h-2 w-8" fill="currentColor">
-          <circle cx="4" cy="6" r="1.2" />
-          <circle cx="12" cy="6" r="1.2" />
-          <circle cx="20" cy="6" r="1.2" />
+        <svg viewBox="0 0 12 12" className="h-3 w-3 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M11 4 4 11" />
+          <path d="M11 8 8 11" />
         </svg>
       </div>
     </div>

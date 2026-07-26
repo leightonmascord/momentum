@@ -1405,8 +1405,10 @@ export default function Dashboard() {
                     label={label}
                     cols={cols}
                     minHeight={minHeight}
-                    onResize={(h) => setWidgetPx(id, { height: h })}
-                    onColsChange={(c) => setWidgetSize(id, c, 1)}
+                    onResize={(next) => {
+                      setWidgetSize(id, next.cols, 1)
+                      setWidgetPx(id, { height: next.minHeight })
+                    }}
                     onRemove={() => removeWidgetWithUndo(id)}
                   >
                     {renderWidget(id)}
