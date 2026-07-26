@@ -32,19 +32,6 @@ import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type D
 import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
-
-function colsToColSpan(_cols: number, width: number): number {
-  if (width < 320) return 4
-  if (width < 440) return 6
-  if (width < 800) return 8
-  return 12
-}
-
-function spanToCols(span: number): number {
-  if (span <= 4) return 1
-  if (span <= 8) return 2
-  return 3
-}
 function CustomizeRow({
   id, label, layoutMode, cols, config, onToggle, onSetSize, onSetPx,
 }: {
@@ -233,7 +220,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, setWidgetConfig } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -738,7 +725,7 @@ export default function Dashboard() {
         const progressPercent = Math.min(100, Math.round((streak / nextMilestone) * 100))
         return (
           <div className="space-y-3">
-            <div className="flex items-end justify-between">
+            <div className="flex items-end justify-between gap-3">
               <div className="flex items-end gap-2">
                 <div className={cn('relative w-16 h-16 rounded-full', streak > 0 && todayMinutes === 0 && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-800 animate-[milestone-pulse_2s_ease-in-out_infinite]')}>
                   <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
@@ -772,8 +759,19 @@ export default function Dashboard() {
                 </div>
                 <span className="text-sm text-slate-500">day{streak !== 1 ? 's' : ''}</span>
               </div>
-              <div className="text-right text-xs text-slate-500">
+              <div className="flex items-start gap-2 text-right text-xs text-slate-500">
                 <div>Best <span className="font-semibold text-slate-700 dark:text-slate-200">{longestStreak}</span></div>
+                <button
+                  type="button"
+                  onClick={() => loadData()}
+                  className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+                  aria-label="Refresh streak"
+                  title="Refresh streak data"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
               </div>
             </div>
             {streak === 0 && <p className="text-sm text-slate-500">Log a session today to start your streak!</p>}
@@ -1311,14 +1309,43 @@ export default function Dashboard() {
   return (
     <div data-tour="dashboard" className="space-y-6">
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-          onClick={() => setMode(layoutMode === 'grid' ? 'freeform' : 'grid')}
-          title={layoutMode === 'grid' ? 'Switch to freeform (drag to resize widgets)' : 'Switch to grid layout'}
+        <div
+          role="tablist"
+          aria-label="Dashboard layout"
+          data-tour="layout-toggle"
+          className="inline-flex items-center rounded-md border border-slate-300 bg-white p-0.5 text-sm dark:border-slate-600 dark:bg-slate-800"
         >
-          {layoutMode === 'grid' ? '⬡ Freeform' : '⊞ Grid'}
-        </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={layoutMode === 'grid'}
+            onClick={() => setMode('grid')}
+            className={cn(
+              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
+              layoutMode === 'grid'
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+            )}
+            title="Grid layout: widgets snap to columns"
+          >
+            <span aria-hidden="true">⊞</span> Grid
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={layoutMode === 'freeform'}
+            onClick={() => setMode('freeform')}
+            className={cn(
+              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
+              layoutMode === 'freeform'
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+            )}
+            title="Freeform layout: drag widgets and resize corners"
+          >
+            <span aria-hidden="true">⬡</span> Freeform
+          </button>
+        </div>
         <button
           type="button"
           data-tour="customise-btn"
@@ -1343,7 +1370,13 @@ export default function Dashboard() {
                 const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
                   <div key={id} className={cn(colClass, 'h-full')}>
-                    <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
+                    <SortableWidget
+                      id={id}
+                      label={label}
+                      cols={cols}
+                      onResize={(c) => setWidgetSize(id, c, 1)}
+                      onRemove={() => removeWidgetWithUndo(id)}
+                    >
                       {renderWidget(id)}
                     </SortableWidget>
                   </div>
@@ -1363,18 +1396,17 @@ export default function Dashboard() {
                 const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
                 const label = meta?.label || id
-                const cols = config.cols ?? 1
-                const colSpan = colsToColSpan(cols, config.width ?? defaults.width)
+                const cols = config.cols ?? DEFAULT_CONFIGS[id]?.cols ?? 1
                 const minHeight = config.height ?? defaults.height
                 return (
                   <FreeformWidget
                     key={id}
                     id={id}
                     label={label}
-                    colSpan={colSpan}
+                    cols={cols}
                     minHeight={minHeight}
                     onResize={(h) => setWidgetPx(id, { height: h })}
-                    onColSpanChange={(span) => setWidgetConfig(id, { cols: spanToCols(span) })}
+                    onColsChange={(c) => setWidgetSize(id, c, 1)}
                     onRemove={() => removeWidgetWithUndo(id)}
                   >
                     {renderWidget(id)}

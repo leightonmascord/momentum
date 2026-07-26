@@ -7,27 +7,29 @@ import { MIN_WIDGET_PX_H, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widget
 interface FreeformWidgetProps {
   id: string
   label: string
-  /** Column span in the masonry grid (1-12). */
-  colSpan: number
-  /** Minimum height in pixels. */
+  cols: number
   minHeight: number
   onResize: (minHeight: number) => void
   onRemove?: () => void
-  onColSpanChange?: (colSpan: number) => void
+  onColsChange?: (cols: number) => void
   children: ReactNode
   className?: string
 }
 
-const COL_SPAN_PRESETS = [3, 4, 6, 8, 12] as const
+function colSpanPx(cols: number): number {
+  if (cols >= 3) return 12
+  if (cols === 2) return 6
+  return 4
+}
 
 export function FreeformWidget({
   id,
   label,
-  colSpan,
+  cols,
   minHeight,
   onResize,
   onRemove,
-  onColSpanChange,
+  onColsChange,
   children,
   className,
 }: FreeformWidgetProps) {
@@ -61,9 +63,7 @@ export function FreeformWidget({
     window.addEventListener('pointerup', onUp_)
   }, [minHeight, onResize])
 
-  // Spread the colSpan into a Tailwind class. We use inline style instead so
-  // we don't have to enumerate every (3, 4, 6, 8, 12) variant.
-  const colSpanStyle: React.CSSProperties = { gridColumn: `span ${colSpan} / span ${colSpan}` }
+  const span = colSpanPx(cols)
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -72,12 +72,13 @@ export function FreeformWidget({
     position: 'relative',
     willChange: isDragging ? 'transform' : undefined,
     minHeight,
+    gridColumn: `span ${span} / span ${span}`,
   }
 
   return (
     <div
       ref={setNodeRef}
-      style={{ ...style, ...colSpanStyle }}
+      style={style}
       data-widget-id={id}
       className={cn(
         'flex flex-col bg-white dark:bg-slate-800 rounded-lg shadow-sm border',
@@ -102,18 +103,18 @@ export function FreeformWidget({
           <h3 className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100 select-none">{label}</h3>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {onColSpanChange && (
+          {onColsChange && (
             <select
-              value={colSpan}
+              value={cols}
               onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) => onColSpanChange(Number(e.target.value))}
+              onChange={(e) => onColsChange(Number(e.target.value))}
               aria-label="Widget width"
               title="Widget width"
-              className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1 py-0.5 text-xs text-slate-700 dark:text-slate-200"
+              className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-200"
             >
-              {COL_SPAN_PRESETS.map((n) => (
-                <option key={n} value={n}>{n === 12 ? 'Full' : `${n}/12`}</option>
-              ))}
+              <option value={1}>Narrow</option>
+              <option value={2}>Medium</option>
+              <option value={3}>Wide</option>
             </select>
           )}
           {onRemove && (
@@ -132,7 +133,7 @@ export function FreeformWidget({
         </div>
       </div>
       <div className="flex-1 p-3 overflow-auto">{children}</div>
-      {/* Resize handle: drag the bottom edge to set minHeight */}
+      {/* Bottom resize handle */}
       <div
         onPointerDown={onResizePointerDown}
         className="flex h-3 cursor-ns-resize items-center justify-center border-t border-slate-100 dark:border-slate-700/60 text-slate-300 hover:text-primary-500 dark:text-slate-600 dark:hover:text-primary-400"
