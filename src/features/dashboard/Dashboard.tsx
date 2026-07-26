@@ -29,9 +29,96 @@ import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAU
 import { SortableWidget } from '../../components/widgets/SortableWidget'
 import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
 
+function colsToColSpan(_cols: number, width: number): number {
+  if (width < 320) return 4
+  if (width < 440) return 6
+  if (width < 800) return 8
+  return 12
+}
+
+function spanToCols(span: number): number {
+  if (span <= 4) return 1
+  if (span <= 8) return 2
+  return 3
+}
+function CustomizeRow({
+  id, label, layoutMode, cols, config, onToggle, onSetSize, onSetPx,
+}: {
+  id: string
+  label: string
+  layoutMode: 'grid' | 'freeform'
+  cols: number
+  config: { height?: number } | undefined
+  onToggle: () => void
+  onSetSize: (cols: number) => void
+  onSetPx: (px: { height?: number }) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
+  const height = config?.height ?? defaults.height
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition: transition ?? 'none',
+    zIndex: isDragging ? 50 : undefined,
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        'flex flex-wrap items-center gap-2 rounded-lg border p-2',
+        isDragging
+          ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20 shadow-md'
+          : 'border-slate-200 dark:border-slate-700'
+      )}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="cursor-grab touch-none rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+        aria-label={`Drag to reorder ${label}`}
+        title="Drag to reorder"
+      >
+        <span className="block text-base leading-none">⠿</span>
+      </button>
+      <input
+        type="checkbox"
+        checked
+        onChange={onToggle}
+        className="rounded border-slate-300"
+        aria-label={`Hide ${label}`}
+      />
+      <span className="flex-1 text-sm min-w-[8rem]">{label}</span>
+      {layoutMode === 'grid' ? (
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-slate-500">Width</span>
+          <button onClick={() => onSetSize(cols - 1)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
+          <span className="text-xs w-6 text-center">{cols}</span>
+          <button onClick={() => onSetSize(cols + 1)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-slate-500">Size</span>
+          <input
+            type="number"
+            min={160}
+            max={1600}
+            value={height}
+            onChange={(e) => onSetPx({ height: Number(e.target.value) || 160 })}
+            className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+            aria-label="Height in pixels"
+          />
+          <span className="text-xs text-slate-400">px tall</span>
+        </div>
+      )}
+    </div>
+  )
+}
 const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
 const CELEBRATION_KEY = 'momentum-last-celebration'
 function copySessionInfo(session: Session & { subjectName: string }) {
@@ -146,7 +233,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, setWidgetConfig } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -265,12 +352,11 @@ export default function Dashboard() {
   const [logNote, setLogNote] = useState(persistedForm?.note ?? '')
   const [logFocusTag, setLogFocusTag] = useState<Session['focusTag'] | null>(persistedForm?.focusTag ?? null)
 
-  useEffect(() => {
-    sessionStorage.setItem(LOG_FORM_KEY, JSON.stringify({
-      subjectId: logSubjectId, projectId: logProjectId, taskId: logTaskId,
-      duration: logDuration, date: logDate, time: logTime, note: logNote, focusTag: logFocusTag,
-    }))
-  }, [logSubjectId, logProjectId, logTaskId, logDuration, logDate, logTime, logNote, logFocusTag])
+  // (Removed: persistent sessionStorage sync of the form state on every keystroke.
+  // It was forcing a re-render of all consumers (and a full IndexedDB re-fetch) on
+  // every input change. The form is short-lived — if it's open, the user is typing
+  // in it; we just persist on submit. If the user closes the tab mid-edit, they lose
+  // the draft, which is acceptable.)
 
   // Close FAB on click outside or Escape
   useEffect(() => {
@@ -1235,6 +1321,7 @@ export default function Dashboard() {
         </button>
         <button
           type="button"
+          data-tour="customise-btn"
           className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
           onClick={() => setCustomizeOpen(true)}
         >
@@ -1265,30 +1352,37 @@ export default function Dashboard() {
             </div>
           </SortableContext>
         ) : (
-          <div className="relative min-h-[1200px]">
-            {visibleWidgets.map(id => {
-              const config = widgetConfigs[id] ?? {}
-              const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
-              const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-              const label = meta?.label || id
-              return (
-                <FreeformWidget
-                  key={id}
-                  id={id}
-                  label={label}
-                  x={config.x ?? 0}
-                  y={config.y ?? 0}
-                  width={config.width ?? defaults.width}
-                  height={config.height ?? defaults.height}
-                  onMove={(x, y) => setWidgetPx(id, { x, y })}
-                  onResize={(width, height) => setWidgetPx(id, { width, height })}
-                  onRemove={() => removeWidgetWithUndo(id)}
-                >
-                  {renderWidget(id)}
-                </FreeformWidget>
-              )
-            })}
-          </div>
+          <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
+            <div
+              data-tour="freeform-area"
+              className="grid grid-cols-12 gap-4"
+              style={{ gridAutoFlow: 'dense' }}
+            >
+              {visibleWidgets.map(id => {
+                const config = widgetConfigs[id] ?? {}
+                const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
+                const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+                const label = meta?.label || id
+                const cols = config.cols ?? 1
+                const colSpan = colsToColSpan(cols, config.width ?? defaults.width)
+                const minHeight = config.height ?? defaults.height
+                return (
+                  <FreeformWidget
+                    key={id}
+                    id={id}
+                    label={label}
+                    colSpan={colSpan}
+                    minHeight={minHeight}
+                    onResize={(h) => setWidgetPx(id, { height: h })}
+                    onColSpanChange={(span) => setWidgetConfig(id, { cols: spanToCols(span) })}
+                    onRemove={() => removeWidgetWithUndo(id)}
+                  >
+                    {renderWidget(id)}
+                  </FreeformWidget>
+                )
+              })}
+            </div>
+          </SortableContext>
         )}
       </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
@@ -1317,60 +1411,29 @@ export default function Dashboard() {
             Freeform
           </button>
         </div>
-        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-          {DASHBOARD_WIDGETS_METADATA.map((w) => {
-            const visIdx = visibleWidgets.indexOf(w.id)
-            const isVisible = visIdx !== -1
-            const cols = widgetConfigs[w.id]?.cols ?? 1
-            const config = widgetConfigs[w.id]
-            const defaults = DEFAULT_FREEFORM_SIZE[w.id] ?? { width: 360, height: 280 }
-            const width = config?.width ?? defaults.width
-            const height = config?.height ?? defaults.height
-            return (
-              <div key={w.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
-                <span className="cursor-grab text-slate-400" title="Drag to reorder">⠿</span>
-                <input
-                  type="checkbox"
-                  checked={isVisible}
-                  onChange={() => toggleWidget(w.id)}
-                  className="rounded border-slate-300"
-                />
-                <span className="flex-1 text-sm min-w-[8rem]">{w.label}</span>
-                {layoutMode === 'grid' ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-slate-500">Width</span>
-                    <button onClick={() => setWidgetSize(w.id, cols - 1, 1)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
-                    <span className="text-xs w-6 text-center">{cols}</span>
-                    <button onClick={() => setWidgetSize(w.id, cols + 1, 1)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-slate-500">Size</span>
-                    <input
-                      type="number"
-                      min={220}
-                      max={1200}
-                      value={width}
-                      onChange={(e) => setWidgetPx(w.id, { width: Number(e.target.value) || 220 })}
-                      className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
-                      aria-label="Width in pixels"
-                    />
-                    <span className="text-xs text-slate-400">×</span>
-                    <input
-                      type="number"
-                      min={160}
-                      max={1600}
-                      value={height}
-                      onChange={(e) => setWidgetPx(w.id, { height: Number(e.target.value) || 160 })}
-                      className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
-                      aria-label="Height in pixels"
-                    />
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {visibleWidgets.map((id) => {
+                const w = DASHBOARD_WIDGETS_METADATA.find((m) => m.id === id)
+                if (!w) return null
+                return (
+                  <CustomizeRow
+                    key={id}
+                    id={id}
+                    label={w.label}
+                    layoutMode={layoutMode}
+                    cols={widgetConfigs[id]?.cols ?? 1}
+                    config={widgetConfigs[id]}
+                    onToggle={() => toggleWidget(id)}
+                    onSetSize={(c) => setWidgetSize(id, c, 1)}
+                    onSetPx={(px) => setWidgetPx(id, px)}
+                  />
+                )
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
         <div className="mt-4 flex justify-between">
           <Button
             variant="secondary"

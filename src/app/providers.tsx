@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { parseISO } from 'date-fns'
 import { db } from '../db/app-db'
 import { pullAllData, flushPendingDirtyTables } from '../lib/data-sync'
 
@@ -51,6 +50,9 @@ export interface DataContextValue {
   setScope: (scope: ScopeFilter) => void
   setRangePreset: (preset: RangePreset) => void
   loadData: () => Promise<void>
+  /** Apply a partial in-memory state change without re-reading from IndexedDB.
+   *  Use after a Dexie write to keep the UI in sync without the cost of a full reload. */
+  mutate: (updater: (prev: AppData) => AppData) => void
 }
 
 const emptyData: AppData = {
@@ -71,60 +73,52 @@ const emptyData: AppData = {
   studyAreas: [],
   studyReviews: [],
 }
-
 async function loadAllData(): Promise<AppData> {
+  // Use Dexie indexes where possible to avoid JS-side sorts. Sessions are
+  // sorted by startAt desc (no useful index there because startAt is just
+  // `id, subjectId, projectId, assignmentId, startAt` — `orderBy('startAt').reverse()`
+  // gives us a native sort that uses the index).
   const [
     categories, subjects, projects, sessions, progressLogs,
     marks, assignments, habits, habitLogs, streakDays,
     routines, routineLogs, activities, activityLogs,
     studyAreas, studyReviews,
   ] = await Promise.all([
-    db.categories.toArray(),
-    db.subjects.toArray(),
-    db.projects.toArray(),
-    db.sessions.toArray(),
-    db.progressLogs.toArray(),
-    db.marks.toArray(),
+    db.categories.orderBy('name').toArray(),
+    db.subjects.orderBy('name').toArray(),
+    db.projects.orderBy('name').toArray(),
+    db.sessions.orderBy('startAt').reverse().toArray(),
+    db.progressLogs.orderBy('loggedAt').reverse().toArray(),
+    db.marks.orderBy('date').reverse().toArray(),
     db.assignments.toArray(),
     db.habits.toArray(),
     db.habitLogs.toArray(),
     db.streakDays.toArray(),
-    db.routines.toArray(),
-    db.routineLogs.toArray(),
-    db.activities.toArray(),
-    db.activityLogs.toArray(),
-    db.studyAreas.toArray(),
-    db.studyReviews.toArray(),
+    db.routines.orderBy('name').toArray(),
+    db.routineLogs.orderBy('date').reverse().toArray(),
+    db.activities.orderBy('name').toArray(),
+    db.activityLogs.orderBy('createdAt').reverse().toArray(),
+    db.studyAreas.orderBy('name').toArray(),
+    db.studyReviews.orderBy('reviewedAt').reverse().toArray(),
   ])
 
   return {
-    categories: [...categories].sort((a, b) => a.name.localeCompare(b.name)),
-    subjects: [...subjects].sort((a, b) => a.name.localeCompare(b.name)),
-    sessions: [...sessions]
-      .filter((s) => s.startAt && !isNaN(new Date(s.startAt).getTime()))
-      .sort((a, b) => parseISO(b.startAt).getTime() - parseISO(a.startAt).getTime()),
-    projects: [...projects].sort((a, b) => a.name.localeCompare(b.name)),
-    progressLogs: [...progressLogs]
-      .filter((l) => l.loggedAt && !isNaN(new Date(l.loggedAt).getTime()))
-      .sort((a, b) => parseISO(b.loggedAt).getTime() - parseISO(a.loggedAt).getTime()),
-    marks: [...marks]
-      .filter((m) => m.date && !isNaN(new Date(m.date).getTime()))
-      .sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime()),
-    assignments: [...assignments],
-    habits: [...habits],
-    habitLogs: [...habitLogs].filter((l) => l.date),
-    streakDays: [...streakDays],
-    routines: [...routines].map((r) => ({
-      ...r,
-      dayMinutes: r.dayMinutes ?? {},
-    })).sort((a, b) => a.name.localeCompare(b.name)),
-    routineLogs: [...routineLogs].sort((a, b) => b.date.localeCompare(a.date)),
-    activities: [...activities].sort((a, b) => a.name.localeCompare(b.name)),
-    activityLogs: [...activityLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    studyAreas: [...studyAreas].sort(((a, b) => a.name.localeCompare(b.name))),
-    studyReviews: [...studyReviews]
-      .filter((r) => r.reviewedAt && !isNaN(new Date(r.reviewedAt).getTime()))
-      .sort((a, b) => parseISO(b.reviewedAt).getTime() - parseISO(a.reviewedAt).getTime()),
+    categories,
+    subjects,
+    sessions: sessions.filter((s) => s.startAt && !isNaN(new Date(s.startAt).getTime())),
+    projects,
+    progressLogs: progressLogs.filter((l) => l.loggedAt && !isNaN(new Date(l.loggedAt).getTime())),
+    marks: marks.filter((m) => m.date && !isNaN(new Date(m.date).getTime())),
+    assignments,
+    habits,
+    habitLogs: habitLogs.filter((l) => l.date),
+    streakDays,
+    routines: routines.map((r) => ({ ...r, dayMinutes: r.dayMinutes ?? {} })),
+    routineLogs,
+    activities,
+    activityLogs,
+    studyAreas,
+    studyReviews: studyReviews.filter((r) => r.reviewedAt && !isNaN(new Date(r.reviewedAt).getTime())),
   }
 }
 const DataContext = createContext<DataContextValue | null>(null)
@@ -151,6 +145,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     }, 80)
   }, [])
+  const mutate = useCallback((updater: (prev: AppData) => AppData) => {
+    setData((prev) => updater(prev))
+  }, [])
   // On mount: pull cloud data first (if signed in), then load
   useEffect(() => {
     async function init() {
@@ -173,8 +170,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // On startup, flush any dirty tables that survived from a previous session
   flushPendingDirtyTables()
   const value = useMemo(
-    () => ({ data, isLoading: isInitialLoad, scope, rangePreset, setScope, setRangePreset, loadData }),
-    [data, isInitialLoad, scope, rangePreset, loadData],
+    () => ({ data, isLoading: isInitialLoad, scope, rangePreset, setScope, setRangePreset, loadData, mutate }),
+    [data, isInitialLoad, scope, rangePreset, setScope, setRangePreset, loadData, mutate],
   )
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>

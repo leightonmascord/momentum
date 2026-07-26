@@ -15,6 +15,8 @@ interface Step {
 const STEPS: Step[] = [
   { title: 'Welcome to Momentum', description: 'Your personal study tracker. Let us show you around.' , route: '/'},
   { title: 'Your Dashboard', description: 'See your streak, daily goal, and recent sessions at a glance.' , target: 'div[data-tour=\"dashboard\"]', route: '/'},
+  { title: 'Customise Your Dashboard', description: 'Click "Customise" to show/hide widgets, change widths, and reorder. Switch to "Freeform" for a masonry layout where you can drag widget corners to resize.', target: '[data-tour=\"customise-btn\"]', route: '/' },
+  { title: 'Freeform Layout', description: 'In freeform, drag a widget header to reorder and drag the bottom edge to resize height. Widgets flow into available space like a waterfall.', target: '[data-tour=\"freeform-area\"]', route: '/' },
   { title: 'Study Timer', description: 'Use the Pomodoro timer or simple stopwatch to track study sessions.' , target: '[data-tour=\"timer\"]', route: '/'},
   { title: 'Log Study Time', description: 'Add a session log: subject, duration, date, optional note.' , route: '/'},
   { title: 'Keyboard Shortcuts', description: () => `Press ? for help, or ${formatShortcutLabel('Cmd+K')} to open the command palette.`, route: '/' },
