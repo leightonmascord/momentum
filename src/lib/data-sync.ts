@@ -169,6 +169,26 @@ export async function checkCloudState(uid: string): Promise<CloudState> {
   return result
 }
 
+export async function undeleteAllData(): Promise<number> {
+  let total = 0
+  for (const tableKey of SYNC_TABLES) {
+    try {
+      const rows = await localDb.table(tableKey).toArray() as Array<{ id: string; deletedAt?: string | null }>
+      const toUndelete = rows.filter((r) => r.deletedAt)
+      for (const row of toUndelete) {
+        await localDb.table(tableKey).update(row.id, { deletedAt: null })
+      }
+      total += toUndelete.length
+      if (toUndelete.length > 0) {
+        console.log(`[sync] Undeleted ${toUndelete.length} records in ${tableKey}`)
+      }
+    } catch (e) {
+      console.warn(`Failed to undelete in ${tableKey}:`, e)
+    }
+  }
+  return total
+}
+
 
 // ────────── Push: local Dexie → Firestore ──────────
 

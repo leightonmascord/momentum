@@ -137,6 +137,26 @@ function DataRecovery() {
       setRecovering(false)
     }
   }
+  async function doUndelete() {
+    if (!confirm('Undelete ALL soft-deleted records in this database? This will clear the deletedAt field on every record. The records will reappear in the UI immediately.')) return
+    setRecovering(true)
+    setError('')
+    try {
+      const { undeleteAllData } = await import('../../lib/data-sync')
+      const total = await undeleteAllData()
+      await loadData()
+      setRecovering(false)
+      alert(`Undelete complete! ${total} records restored.`)
+      if (user?.uid) {
+        const { checkCloudState } = await import('../../lib/data-sync')
+        const state = await checkCloudState(user.uid)
+        setDiag(state)
+      }
+    } catch (e) {
+      setError(String(e))
+      setRecovering(false)
+    }
+  }
   return (
     <Card>
       <CardHeader>
@@ -151,6 +171,9 @@ function DataRecovery() {
         </Button>
         <Button variant="danger" size="sm" onClick={doForcePull} disabled={recovering}>
           {recovering ? 'Recovering...' : 'Force Re-pull from Cloud'}
+        </Button>
+        <Button variant="primary" size="sm" onClick={doUndelete} disabled={recovering}>
+          {recovering ? 'Working...' : 'Undelete All'}
         </Button>
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
