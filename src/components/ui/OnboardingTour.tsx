@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { formatShortcutLabel } from '../../lib/shortcuts'
 import { Button } from './Button'
 const TOUR_KEY = 'momentum-tour-completed'
 const TOUR_STEP_KEY = 'momentum-tour-step'
 interface Step {
   title: string
-  description: string
+  description: string | (() => string)
   /** Optional element selector for cutout highlight */
   target?: string
   /** Route to navigate to before showing this step */
@@ -16,7 +17,7 @@ const STEPS: Step[] = [
   { title: 'Your Dashboard', description: 'See your streak, daily goal, and recent sessions at a glance.' , target: 'div[data-tour=\"dashboard\"]', route: '/'},
   { title: 'Study Timer', description: 'Use the Pomodoro timer or simple stopwatch to track study sessions.' , target: '[data-tour=\"timer\"]', route: '/'},
   { title: 'Log Study Time', description: 'Add a session log: subject, duration, date, optional note.' , route: '/'},
-  { title: 'Keyboard Shortcuts', description: 'Press ? for help, or ⌘K to open the command palette.' , route: '/'},
+  { title: 'Keyboard Shortcuts', description: () => `Press ? for help, or ${formatShortcutLabel('Cmd+K')} to open the command palette.`, route: '/' },
 ]
 export function OnboardingTour() {
   const [completed, setCompleted] = useState(() => {
@@ -165,7 +166,7 @@ export function OnboardingTour() {
           {step.title}
         </h2>
         <p className="mb-6 text-sm text-slate-600 dark:text-slate-400">
-          {step.description}
+          {typeof step.description === 'function' ? step.description() : step.description}
         </p>
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-400">

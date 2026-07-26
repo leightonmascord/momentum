@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '../../lib/utils'
-import { isInputFocused, eventToShortcutKey, SHORTCUTS } from '../../lib/shortcuts'
+import { isInputFocused, eventToShortcutKey, SHORTCUTS, formatShortcutLabel } from '../../lib/shortcuts'
 import { Kbd } from '../ui/Kbd'
 import { UndoToast } from '../ui/UndoToast'
 import { Modal } from '../ui/Modal'
@@ -586,7 +586,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   {items.map((shortcut) => (
                     <li key={shortcut.id} className="flex items-center justify-between gap-4 text-sm">
                       <span className="text-slate-700 dark:text-slate-300">{shortcut.label}</span>
-                      <Kbd>{shortcut.keys}</Kbd>
+                      <Kbd>{formatShortcutLabel(shortcut.keys)}</Kbd>
                     </li>
                   ))}
                 </ul>

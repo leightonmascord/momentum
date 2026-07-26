@@ -43,7 +43,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'nav-projects', label: 'Go to Projects', keys: 'P', category: 'global', description: 'Navigate to Projects', suppressInInput: true },
   { id: 'nav-habits', label: 'Go to Habits', keys: 'H', category: 'global', description: 'Navigate to Habits', suppressInInput: true },
   { id: 'nav-reports', label: 'Go to Reports', keys: 'R', category: 'global', description: 'Navigate to Reports', suppressInInput: true },
-  { id: 'nav-calendar', label: 'Go to Tasks', keys: 'C', category: 'global', description: 'Navigate to Tasks/Calendar', suppressInInput: true },
+  { id: 'nav-calendar', label: 'Go to Tasks', keys: 'T', category: 'global', description: 'Navigate to Tasks/Calendar', suppressInInput: true },
 
   // ── Dashboard ──
   { id: 'dash-log-time', label: 'Log Study Time', keys: 'N', category: 'dashboard', description: 'Open log study time modal', suppressInInput: true, routes: ['/'] },
@@ -57,7 +57,6 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'dash-widget-8', label: 'Toggle Widget 8', keys: '8', category: 'dashboard', description: 'Toggle eighth widget visibility', suppressInInput: true, routes: ['/'] },
   { id: 'dash-cal-prev', label: 'Previous Month', keys: '←', category: 'dashboard', description: 'Navigate calendar to previous month', suppressInInput: true, routes: ['/'] },
   { id: 'dash-cal-next', label: 'Next Month', keys: '→', category: 'dashboard', description: 'Navigate calendar to next month', suppressInInput: true, routes: ['/'] },
-  { id: 'dash-cal-today', label: 'Jump to Today', keys: 'T', category: 'dashboard', description: 'Jump calendar to today', suppressInInput: true, routes: ['/'] },
 
   // ── Subjects ──
   { id: 'subj-add', label: 'Add Focus Area', keys: 'N', category: 'subjects', description: 'Add a new focus area', suppressInInput: true, routes: ['/subjects'] },
@@ -162,4 +161,19 @@ export function getShortcutsForRoute(pathname: string): Shortcut[] {
     if (!s.routes || s.routes.length === 0) return true
     return s.routes.some((r) => pathname === r || (r !== '/' && pathname.startsWith(r)))
   })
+}
+
+/**
+ * Return a platform-appropriate label for a shortcut's keys string.
+ * On macOS, `Cmd+` is shown as `⌘`. On Windows/Linux, `Cmd+` is shown as `Ctrl+`.
+ * All other parts are unchanged. Touch devices fall back to the raw keys string.
+ */
+export function formatShortcutLabel(keys: string): string {
+  if (typeof window === 'undefined') return keys
+  const isMac = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform || window.navigator.userAgent || '')
+  if (isMac) {
+    // Cmd → ⌘ for display, but keep the canonical key for matching
+    return keys.replace(/Cmd\+/g, '⌘')
+  }
+  return keys.replace(/Cmd\+/g, 'Ctrl+')
 }

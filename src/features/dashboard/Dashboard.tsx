@@ -2,7 +2,7 @@ import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
 import { SubjectBreakdown } from '../../components/widgets/SubjectBreakdown'
 import { formatTotalToday, getLiveTimerSeconds, getLiveTimerSubjectId, getTotalTodayMinutes, isTimerActive } from '../../lib/timer-utils'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { addMonths, format, subDays, subMonths } from 'date-fns'
 import { v4 as uuid } from 'uuid'
 import { PomodoroTimer } from '../../components/widgets/PomodoroTimer'
@@ -25,8 +25,9 @@ import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
-import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS } from '../../lib/use-dashboard-widgets'
+import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
 import { SortableWidget } from '../../components/widgets/SortableWidget'
+import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
@@ -145,7 +146,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, setWidgetSize } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -289,67 +290,70 @@ export default function Dashboard() {
       document.removeEventListener('keydown', onKey)
     }
   }, [fabOpen])
+  const loggingRef = useRef(false)
   async function handleLogTime() {
+    if (loggingRef.current) return
     if (logDuration < 1) {
       alert('Duration must be at least 1 minute')
       return
     }
-    const note = logNote.trim()
-    const [y, m, d] = logDate.split('-').map(Number)
-    let startAt: string
-    let endAt: string
-    let noTime = false
-    if (logTime) {
-      const [h, mm] = logTime.split(':').map(Number)
-      const start = new Date(y, m - 1, d, h, mm, 0, 0)
-      startAt = start.toISOString()
-      endAt = new Date(start.getTime() + logDuration * 60_000).toISOString()
-    } else {
-      startAt = new Date(y, m - 1, d, 12, 0, 0, 0).toISOString()
-      endAt = new Date(y, m - 1, d, 12, logDuration, 0, 0).toISOString()
-      noTime = true
+    loggingRef.current = true
+    try {
+      const note = logNote.trim()
+      const [y, m, d] = logDate.split('-').map(Number)
+      let startAt: string, endAt: string, noTime = false
+      if (logTime) {
+        const [h, mm] = logTime.split(':').map(Number)
+        const start = new Date(y, m - 1, d, h, mm, 0, 0)
+        startAt = start.toISOString()
+        endAt = new Date(start.getTime() + logDuration * 60_000).toISOString()
+      } else {
+        startAt = new Date(y, m - 1, d, 12, 0, 0, 0).toISOString()
+        endAt = new Date(y, m - 1, d, 12, logDuration, 0, 0).toISOString()
+        noTime = true
+      }
+      if (!logSubjectId && !logProjectId) return
+      const project = logProjectId ? data.projects.find((p) => p.id === logProjectId) : undefined
+      const task = logTaskId ? data.assignments.find((a) => a.id === logTaskId) : undefined
+      const actualSubjectId = project ? project.subjectId : logSubjectId
+      if (!actualSubjectId) return
+      const taskNote = note || (task ? `Task: ${task.title}` : undefined)
+      const session: Session = {
+        id: uuid(),
+        subjectId: actualSubjectId,
+        projectId: project?.id ?? null,
+        assignmentId: task?.id ?? null,
+        startAt,
+        endAt,
+        durationMinutes: logDuration,
+        note: taskNote,
+        focusTag: logFocusTag ?? undefined,
+        source: 'quickLog' as const,
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+        noTime
+      }
+      const subjectName = data.subjects.find((s) => s.id === actualSubjectId)?.name ?? 'Unknown Subject'
+      // Parallel save: DB + background maintenance + load
+      await Promise.all([
+        db.sessions.add(session),
+        updateRoutineLogsForSession(session),
+        updateStreakDayForSession(session)
+      ])
+      syncSession(session, subjectName) // Fire-and-forget sync
+      await loadData() // Refresh
+      let description = `Logged ${logDuration}m${project ? ` for ${project.name}` : ` study for ${subjectName}`}`
+      if (task) description += ` (${task.title})`
+      push({
+        description,
+        undo: async () => { await db.sessions.delete(session.id); await revertStreakDayForSession(session); await loadData() },
+        redo: async () => { await db.sessions.add(session); await updateStreakDayForSession(session); await loadData() },
+      })
+      sessionStorage.removeItem(LOG_FORM_KEY)
+      setLogSubjectId(''); setLogProjectId(''); setLogTaskId(''); setLogTime(''); setLogNote(''); setLogFocusTag(null)
+    } finally {
+      loggingRef.current = false
     }
-    if (!logSubjectId && !logProjectId) return
-    const project = logProjectId ? data.projects.find((p) => p.id === logProjectId) : undefined
-    const task = logTaskId ? data.assignments.find((a) => a.id === logTaskId) : undefined
-    const actualSubjectId = project ? project.subjectId : logSubjectId
-    if (!actualSubjectId) return
-    const taskNote = note || (task ? `Task: ${task.title}` : undefined)
-    const session: Session = {
-      id: uuid(),
-      subjectId: actualSubjectId,
-      projectId: project?.id ?? null,
-      assignmentId: task?.id ?? null,
-      startAt,
-      endAt,
-      durationMinutes: logDuration,
-      note: taskNote,
-      focusTag: logFocusTag ?? undefined,
-      source: 'quickLog' as const,
-      createdAt: isoNow(),
-      updatedAt: isoNow(),
-      noTime
-    }
-    await db.sessions.add(session)
-    const subjectName = data.subjects.find((s) => s.id === actualSubjectId)?.name ?? 'Unknown Subject'
-    await updateRoutineLogsForSession(session)
-    await updateStreakDayForSession(session)
-    syncSession(session, subjectName)
-    await loadData()
-    let description = `Logged ${logDuration}m${project ? ` for ${project.name}` : ` study for ${subjectName}`}`
-    if (task) description += ` (${task.title})`
-    push({
-      description,
-      undo: async () => { await db.sessions.delete(session.id); await revertStreakDayForSession(session); await loadData() },
-      redo: async () => { await db.sessions.add(session); await updateStreakDayForSession(session); await loadData() },
-    })
-    sessionStorage.removeItem(LOG_FORM_KEY)
-    setLogSubjectId('')
-    setLogProjectId('')
-    setLogTaskId('')
-    setLogTime('')
-    setLogNote('')
-    setLogFocusTag(null)
   }
   const [editLog, setEditLog] = useState<Session | null>(null)
   const [editDuration, setEditDuration] = useState(30)
@@ -401,32 +405,30 @@ export default function Dashboard() {
       redo: async () => { await db.sessions.update(editLog.id, updated); await loadData() },
     })
   }
-
   async function deleteSession(id: string) {
     const session = data.sessions.find((s) => s.id === id)
     if (!session) return
     await db.sessions.delete(id)
     syncSessionDelete(id)
-    await revertRoutineLogsForSession(session)
-    await revertStreakDayForSession(session)
+    await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)])
     await loadData()
     push({
       description: `Deleted session (${session.durationMinutes}m)`,
-      undo: async () => { await db.sessions.add(session); await updateRoutineLogsForSession(session); await updateStreakDayForSession(session); await syncSession(session, data.subjects.find(s => s.id === session.subjectId)?.name ?? 'Unknown'); await loadData() },
-      redo: async () => { await db.sessions.delete(id); await revertRoutineLogsForSession(session); await revertStreakDayForSession(session); await syncSessionDelete(id); await loadData() },
+      undo: async () => { await db.sessions.add(session); await Promise.all([updateRoutineLogsForSession(session), updateStreakDayForSession(session)]); await syncSession(session, data.subjects.find(s => s.id === session.subjectId)?.name ?? 'Unknown'); await loadData() },
+      redo: async () => { await db.sessions.delete(id); await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)]); await syncSessionDelete(id); await loadData() },
     })
   }
 
   async function deleteSelectedSessions() {
-    for (const id of selectedSessionIds) {
-      const session = data.sessions.find(s => s.id === id)
-      if (session) {
-        await db.sessions.delete(id)
-        syncSessionDelete(id)
-        await revertRoutineLogsForSession(session)
-        await revertStreakDayForSession(session)
-      }
-    }
+    const targets = Array.from(selectedSessionIds)
+      .map(id => data.sessions.find(s => s.id === id))
+      .filter((s): s is Session => !!s)
+    // DB delete in parallel, then bookkeeping in parallel
+    await Promise.all(targets.map(s => db.sessions.delete(s.id)))
+    for (const s of targets) syncSessionDelete(s.id)
+    await Promise.all(
+      targets.flatMap(s => [revertRoutineLogsForSession(s), revertStreakDayForSession(s)])
+    )
     setSelectedSessionIds(new Set()); setSelectionMode(false)
     await loadData()
   }
@@ -883,32 +885,36 @@ export default function Dashboard() {
               <p className="text-sm text-slate-500">No sessions yet. Start studying!</p>
             ) : (
               <div className="space-y-3">
-                {selectedSessionIds.size === 0 && (
+                {!selectionMode && selectedSessionIds.size === 0 && (
                   <div className="flex justify-end">
                     <Button size="sm" variant="secondary" onClick={() => setSelectionMode(true)}>Select Sessions</Button>
                   </div>
                 )}
-                {selectedSessionIds.size > 0 && (
+                {(selectionMode || selectedSessionIds.size > 0) && (
                   <div className="flex items-center justify-between gap-2 rounded-md border border-primary-300 bg-primary-50 px-3 py-2 dark:border-primary-700 dark:bg-primary-900/30">
                     <span className="text-sm font-medium text-primary-900 dark:text-primary-100">
                       {selectedSessionIds.size} selected
                     </span>
                     <div className="flex gap-2">
                       <Button size="sm" variant="secondary" onClick={() => { setSelectedSessionIds(new Set()); setSelectionMode(false) }}>Cancel</Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setSelectedSessionIds(new Set())}
-                      >
-                        Clear
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setBatchSubjectModalOpen(true)}
-                      >
-                        Change Subject
-                      </Button>
+                      {selectedSessionIds.size > 0 && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setSelectedSessionIds(new Set())}
+                          >
+                            Clear
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setBatchSubjectModalOpen(true)}
+                          >
+                            Change Subject
+                          </Button>
+                        </>
+                      )}
                       <Button
                         size="sm"
                         variant="primary"
@@ -1230,35 +1236,88 @@ export default function Dashboard() {
         <ActivityConfirmationCard onDismiss={() => setShowActivityConfirmation(false)} />
       )}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-[minmax(80px,auto)] grid-flow-dense">
+        {layoutMode === 'grid' ? (
+          <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+              {visibleWidgets.map(id => {
+                const cols = widgetConfigs[id]?.cols ?? 1
+                const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+                const label = meta?.label || id
+                const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
+                return (
+                  <div key={id} className={cn(colClass, 'h-full')}>
+                    <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
+                      {renderWidget(id)}
+                    </SortableWidget>
+                  </div>
+                )
+              })}
+            </div>
+          </SortableContext>
+        ) : (
+          <div className="relative min-h-[1200px]">
             {visibleWidgets.map(id => {
-              const cols = widgetConfigs[id]?.cols ?? 1
-              const rows = widgetConfigs[id]?.rows ?? 1
+              const config = widgetConfigs[id] ?? {}
+              const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
               const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
               const label = meta?.label || id
-              const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
-              const rowClass = rows === 3 ? 'lg:row-span-3' : rows === 2 ? 'lg:row-span-2' : 'lg:row-span-1'
-            return (
-              <div key={id} className={cn(colClass, rowClass, 'h-full')}>
-                <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
+              return (
+                <FreeformWidget
+                  key={id}
+                  id={id}
+                  label={label}
+                  x={config.x ?? 0}
+                  y={config.y ?? 0}
+                  width={config.width ?? defaults.width}
+                  height={config.height ?? defaults.height}
+                  onMove={(x, y) => setWidgetPx(id, { x, y })}
+                  onResize={(width, height) => setWidgetPx(id, { width, height })}
+                  onRemove={() => removeWidgetWithUndo(id)}
+                >
                   {renderWidget(id)}
-                </SortableWidget>
-              </div>
-            )
-          })}
+                </FreeformWidget>
+              )
+            })}
           </div>
-        </SortableContext>
+        )}
       </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Layout</span>
+          <button
+            onClick={() => setMode('grid')}
+            className={cn(
+              'rounded px-2 py-1 text-xs',
+              layoutMode === 'grid'
+                ? 'bg-primary-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+            )}
+          >
+            Grid
+          </button>
+          <button
+            onClick={() => setMode('freeform')}
+            className={cn(
+              'rounded px-2 py-1 text-xs',
+              layoutMode === 'freeform'
+                ? 'bg-primary-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+            )}
+          >
+            Freeform
+          </button>
+        </div>
         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
           {DASHBOARD_WIDGETS_METADATA.map((w) => {
             const visIdx = visibleWidgets.indexOf(w.id)
             const isVisible = visIdx !== -1
             const cols = widgetConfigs[w.id]?.cols ?? 1
-            const rows = widgetConfigs[w.id]?.rows ?? 1
+            const config = widgetConfigs[w.id]
+            const defaults = DEFAULT_FREEFORM_SIZE[w.id] ?? { width: 360, height: 280 }
+            const width = config?.width ?? defaults.width
+            const height = config?.height ?? defaults.height
             return (
-              <div key={w.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
+              <div key={w.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
                 <span className="cursor-grab text-slate-400" title="Drag to reorder">⠿</span>
                 <input
                   type="checkbox"
@@ -1266,15 +1325,38 @@ export default function Dashboard() {
                   onChange={() => toggleWidget(w.id)}
                   className="rounded border-slate-300"
                 />
-                <span className="flex-1 text-sm">{w.label}</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-slate-500">Size</span>
-                  <button onClick={() => setWidgetSize(w.id, cols - 1, rows)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
-                  <span className="text-xs w-8 text-center">{cols}×{rows}</span>
-                  <button onClick={() => setWidgetSize(w.id, cols + 1, rows)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
-                  <button onClick={() => setWidgetSize(w.id, cols, rows - 1)} disabled={rows <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30 ml-1">↑</button>
-                  <button onClick={() => setWidgetSize(w.id, cols, rows + 1)} disabled={rows >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">↓</button>
-                </div>
+                <span className="flex-1 text-sm min-w-[8rem]">{w.label}</span>
+                {layoutMode === 'grid' ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-slate-500">Width</span>
+                    <button onClick={() => setWidgetSize(w.id, cols - 1, 1)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
+                    <span className="text-xs w-6 text-center">{cols}</span>
+                    <button onClick={() => setWidgetSize(w.id, cols + 1, 1)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-slate-500">Size</span>
+                    <input
+                      type="number"
+                      min={220}
+                      max={1200}
+                      value={width}
+                      onChange={(e) => setWidgetPx(w.id, { width: Number(e.target.value) || 220 })}
+                      className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                      aria-label="Width in pixels"
+                    />
+                    <span className="text-xs text-slate-400">×</span>
+                    <input
+                      type="number"
+                      min={160}
+                      max={1600}
+                      value={height}
+                      onChange={(e) => setWidgetPx(w.id, { height: Number(e.target.value) || 160 })}
+                      className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                      aria-label="Height in pixels"
+                    />
+                  </div>
+                )}
               </div>
             )
           })}
@@ -1286,6 +1368,7 @@ export default function Dashboard() {
             onClick={() => {
               setVisibleWidgets(DEFAULT_WIDGET_IDS)
               setWidgetConfigs(DEFAULT_CONFIGS)
+              setMode('grid')
             }}
           >
             Reset to defaults
@@ -1299,10 +1382,10 @@ export default function Dashboard() {
           <div className="absolute bottom-16 right-0 mb-4 flex flex-col items-end gap-2">
             {[
               { label: 'Log study time', icon: '⏱', onClick: () => { setLogModalOpen(true); setFabOpen(false) } },
-              { label: 'Start quick Pomodoro', icon: '🍅', onClick: () => { navigate('/study'); setFabOpen(false) } },
-              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks'); setFabOpen(false) } },
-              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar'); setFabOpen(false) } },
-              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects'); setFabOpen(false) } },
+              { label: 'Start quick Pomodoro', icon: '🍅', onClick: () => { window.dispatchEvent(new CustomEvent('momentum:timer-toggle')); setFabOpen(false) } },
+              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:marks-add')), 0); setFabOpen(false) } },
+              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:calendar-add')), 0); setFabOpen(false) } },
+              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:subjects-add')), 0); setFabOpen(false) } },
             ].map((action, i) => (
               <div key={i} className="group relative flex items-center">
                 <div className="absolute right-14 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-slate-200 dark:text-slate-800 pointer-events-none">
@@ -1413,13 +1496,13 @@ export default function Dashboard() {
               </div>
             </div>
             <Button
-              disabled={!logSubjectId && !logProjectId}
+              disabled={(!logSubjectId && !logProjectId) || loggingRef.current}
               onClick={async () => {
-                await handleLogTime()
                 setLogModalOpen(false)
+                await handleLogTime()
               }}
             >
-              Log Time
+              {loggingRef.current ? 'Logging...' : 'Log Time'}
             </Button>
           </div>
         </div>
