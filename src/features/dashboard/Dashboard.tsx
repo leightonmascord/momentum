@@ -536,7 +536,7 @@ export default function Dashboard() {
       case 'today':
         return (
           <Card>
-            <div className="mb-4 grid grid-cols-3 gap-4 border-b border-slate-200 pb-3 dark:border-slate-700">
+            <div className="mb-4 grid grid-cols-2 gap-4 border-b border-slate-200 pb-3 dark:border-slate-700">
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Today</div>
                 <div className="mt-0.5 text-2xl font-bold text-slate-800 dark:text-slate-100">
@@ -545,7 +545,7 @@ export default function Dashboard() {
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   {goalPct >= 100
                     ? <span className="text-green-600 dark:text-green-400 font-medium">Target reached!</span>
-                    : `${formatMinutes(settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes))} of ${formatMinutes(settings.dailyTargetMinutes)} goal`
+                    : `${formatMinutes(settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes))} left of ${formatMinutes(settings.dailyTargetMinutes)} goal`
                   }
                 </div>
               </div>
@@ -645,7 +645,7 @@ export default function Dashboard() {
             </div>
           </Card>
         )
-      case 'streak-goal': {
+      case 'study-streak': {
         const nextMilestone = STREAK_MILESTONES.find(m => m > streak) ?? streak
         const progressPercent = Math.min(100, Math.round((streak / nextMilestone) * 100))
         return (

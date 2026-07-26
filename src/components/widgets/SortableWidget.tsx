@@ -29,9 +29,10 @@ export function SortableWidget({
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition: transition ?? 'transform 250ms ease',
+    transition: transition ?? 'none',
     zIndex: isDragging ? 50 : undefined,
     position: 'relative' as const,
+    willChange: isDragging ? 'transform' : undefined,
   }
 
   return (
@@ -43,7 +44,7 @@ export function SortableWidget({
         'relative bg-white dark:bg-slate-800 rounded-lg shadow-sm border h-full',
         'transition-[box-shadow,border-color] duration-150',
         isDragging
-          ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20 shadow-lg shadow-primary-500/10 ring-2 ring-primary-400/30 scale-[1.01]'
+          ? 'border-primary-400 dark:border-primary-500 shadow-lg shadow-primary-500/20 ring-2 ring-primary-400/40 opacity-95'
           : 'border-slate-200 dark:border-slate-700',
         className
       )}

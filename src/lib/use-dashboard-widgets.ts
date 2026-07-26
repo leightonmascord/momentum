@@ -20,13 +20,14 @@ export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
   { id: 'calendar',     label: 'Study Calendar' },
   { id: 'recent',       label: 'Recent Sessions' },
   { id: 'assignments',  label: 'Upcoming Assignments' },
+  { id: 'study-streak', label: 'Study Streak' },
 ]
 
 export const DEFAULT_CONFIGS: Record<string, Omit<WidgetConfig, 'id' | 'label'>> = 
   DASHBOARD_WIDGETS_METADATA.reduce((acc, w, i) => {
     let cols = 1, rows = 1
     if (w.id === 'today' || w.id === 'calendar' || w.id === 'recent') { cols = 2; rows = 1 }
-    if (w.id === 'streak-goal') { cols = 2; rows = 2 }
+    if (w.id === 'study-streak') { cols = 2; rows = 2 }
     acc[w.id] = { cols, rows, order: i }
     return acc
   }, {} as Record<string, Omit<WidgetConfig, 'id' | 'label'>>)
@@ -39,7 +40,9 @@ export function useDashboardWidgets() {
       const saved = localStorage.getItem('momentum-dashboard-widgets')
       if (!saved) return DEFAULT_WIDGET_IDS
       const parsed = JSON.parse(saved)
-      return Array.isArray(parsed) ? parsed : DEFAULT_WIDGET_IDS
+      if (!Array.isArray(parsed)) return DEFAULT_WIDGET_IDS
+      const validIds = new Set(DASHBOARD_WIDGETS_METADATA.map(w => w.id))
+      return parsed.filter((id: string) => validIds.has(id))
     } catch {
       return DEFAULT_WIDGET_IDS
     }
