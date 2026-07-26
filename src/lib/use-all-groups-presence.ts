@@ -35,9 +35,11 @@ export function useAllGroupsPresence(uid: string | null, filterUid?: string | nu
       if (cancelled) return
       // Subscribe to each group's presence
       const snapshots: Record<string, GroupPresence[]> = {}
+      const failedGroups = new Set<string>()
       for (const g of groups) {
         const unsub = groupService.subscribePresence(g.id, (records) => {
           // Filter out the current user's own presence if requested
+          if (failedGroups.has(g.id)) return
           const filtered = filterUid
             ? records.filter((r) => r.uid !== filterUid)
             : records
@@ -46,7 +48,15 @@ export function useAllGroupsPresence(uid: string | null, filterUid?: string | nu
             setPresenceMap(new Map(Object.entries(snapshots)))
           }
         })
-        unsubscribes.current.push(unsub)
+        // Wrap unsub so a permission error on this group also removes it
+        // from the snapshots map.
+        const wrappedUnsub = () => {
+          failedGroups.add(g.id)
+          delete snapshots[g.id]
+          if (!cancelled) setPresenceMap(new Map(Object.entries(snapshots)))
+          unsub()
+        }
+        unsubscribes.current.push(wrappedUnsub)
       }
     })
 

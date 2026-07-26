@@ -225,7 +225,16 @@ export const groupService = {
   /** Subscribe to live presence for a group. Returns an unsubscribe function. */
   subscribePresence(groupId: string, callback: (records: GroupPresence[]) => void): () => void {
     if (!isFirebaseConfigured || !db) return () => {}
-    return onSnapshot(
+    let innerUnsub: (() => void) | null = null
+    const errorUnsub = (err: unknown) => {
+      // Auto-unsubscribe on permission errors so the SDK stops retrying
+      // and the console doesn't fill with the same error. Group was deleted
+      // or the user was removed — either way, we can't read this anymore.
+      console.warn('Presence subscription error:', err)
+      innerUnsub?.()
+      innerUnsub = null
+    }
+    innerUnsub = onSnapshot(
       collection(db!, 'groups', groupId, 'presence'),
       (snap) => {
         const records: GroupPresence[] = []
@@ -237,7 +246,8 @@ export const groupService = {
         }
         callback(records)
       },
-      (err) => { console.warn('Presence subscription error:', err) }
+      errorUnsub
     )
+    return () => { innerUnsub?.() }
   },
 }
