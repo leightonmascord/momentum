@@ -107,6 +107,35 @@ export async function pullAllData(uid: string): Promise<number> {
   }
   return total
 }
+export async function forcePullAllData(uid: string): Promise<number> {
+  if (!isFirebaseConfigured || !firestore) return 0
+  let total = 0
+  beginSync()
+  try {
+    for (const tableKey of SYNC_TABLES) {
+      try {
+        const snap = await getDoc(doc(firestore, DATA_COLLECTION, `${uid}_${tableKey}`))
+        if (!snap.exists()) continue
+        const cloudDoc = snap.data() as CloudTableDoc
+        if (!Array.isArray(cloudDoc.records) || cloudDoc.records.length === 0) continue
+        const table = localDb.table(tableKey)
+        // FORCE: replace the entire table with the cloud copy. Use bulkPut to
+        // upsert all cloud records. This does NOT delete records that are
+        // missing from cloud — those remain in local.
+        const cloudRecords = cloudDoc.records as { id: string }[]
+        await table.bulkPut(cloudRecords)
+        total += cloudRecords.length
+        console.log(`[sync] Force-pulled ${tableKey}: ${cloudRecords.length} records`)
+      } catch (e) {
+        console.warn(`Failed to force-pull table ${tableKey}:`, e)
+      }
+    }
+  } finally {
+    endSync()
+  }
+  return total
+}
+
 
 // ────────── Push: local Dexie → Firestore ──────────
 

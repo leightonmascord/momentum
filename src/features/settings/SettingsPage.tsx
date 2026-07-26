@@ -9,6 +9,7 @@ import { useAuth } from '../../app/auth-provider'
 import { downloadBackup, readBackupFile, importBackup, ImportMode } from '../../lib/backup'
 import type { BackupPayload } from '../../lib/backup'
 import { pushSettings } from '../../lib/settings-sync'
+import { forcePullAllData } from '../../lib/data-sync'
 import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
 import { requestNotificationPermission } from '../../lib/notification-service'
@@ -93,6 +94,41 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
         }`}
       />
     </button>
+  )
+}
+
+function DataRecovery() {
+  const { user } = useAuth()
+  const { loadData } = useData()
+  const [recovering, setRecovering] = useState(false)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Data Recovery</CardTitle>
+      </CardHeader>
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        If your study data seems missing, you can force a re-pull from the cloud.
+        This will merge all available records from your cloud backup.
+      </p>
+      <div className="mt-3">
+        <Button variant="danger" size="sm" onClick={async () => {
+          if (!user?.uid) return
+          setRecovering(true)
+          try {
+            await forcePullAllData(user.uid)
+            await loadData()
+            alert('Data recovery complete!')
+          } catch (e) {
+            console.error(e)
+            alert('Data recovery failed.')
+          } finally {
+            setRecovering(false)
+          }
+        }}>
+          {recovering ? 'Recovering...' : 'Force Re-pull from Cloud'}
+        </Button>
+      </div>
+    </Card>
   )
 }
 
@@ -514,6 +550,9 @@ export default function SettingsPage() {
               <DataImport />
             </div>
           </Card>
+
+          <DataRecovery />
+
 
           <Card>
             <CardHeader>
