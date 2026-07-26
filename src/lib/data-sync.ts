@@ -171,29 +171,48 @@ export async function checkCloudState(uid: string): Promise<CloudState> {
 
 export async function undeleteAllData(uid?: string): Promise<number> {
   let total = 0
-  for (const tableKey of SYNC_TABLES) {
-    try {
-      const rows = await localDb.table(tableKey).toArray() as Array<{ id: string; deletedAt?: string | null }>
-      const toUndelete = rows.filter((r) => r.deletedAt)
-      for (const row of toUndelete) {
-        await localDb.table(tableKey).update(row.id, { deletedAt: null })
+  const touchedTables: TableKey[] = []
+  // Block the onSnapshot listener from reverting our changes during the
+  // entire undelete+push cycle. Without this, the cloud snapshot listener
+  // can fire between our local update and cloud push, re-applying the
+  // soft-deleted records.
+  beginSync()
+  try {
+    for (const tableKey of SYNC_TABLES) {
+      try {
+        const rows = await localDb.table(tableKey).toArray() as Array<{ id: string; deletedAt?: string | null }>
+        const toUndelete = rows.filter((r) => r.deletedAt)
+        for (const row of toUndelete) {
+          // Setting both deletedAt: null AND bumping updatedAt ensures the
+          // record is definitively newer than any stale cloud copy.
+          await localDb.table(tableKey).update(row.id, {
+            deletedAt: null,
+            updatedAt: new Date().toISOString(),
+          } as Record<string, unknown>)
+        }
+        total += toUndelete.length
+        if (toUndelete.length > 0) {
+          console.log(`[sync] Undeleted ${toUndelete.length} records in ${tableKey}`)
+          touchedTables.push(tableKey)
+        }
+      } catch (e) {
+        console.warn(`Failed to undelete in ${tableKey}:`, e)
       }
-      total += toUndelete.length
-      if (toUndelete.length > 0) {
-        console.log(`[sync] Undeleted ${toUndelete.length} records in ${tableKey}`)
-        // Push the cleaned records to the cloud so the next sync doesn't
-        // re-overwrite them with the cloud's soft-deleted version.
-        if (uid) {
-          try {
-            await pushTable(uid, tableKey)
-          } catch (e) {
-            console.warn(`Failed to push undeleted ${tableKey} to cloud:`, e)
-          }
+    }
+    // Push all touched tables to the cloud AFTER the local state is clean.
+    // Because beginSync() is active, the onSnapshot listener is disabled
+    // and won't overwrite our changes.
+    if (uid) {
+      for (const tableKey of touchedTables) {
+        try {
+          await pushTable(uid, tableKey)
+        } catch (e) {
+          console.warn(`Failed to push undeleted ${tableKey} to cloud:`, e)
         }
       }
-    } catch (e) {
-      console.warn(`Failed to undelete in ${tableKey}:`, e)
     }
+  } finally {
+    endSync()
   }
   return total
 }
