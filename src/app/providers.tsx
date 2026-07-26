@@ -74,10 +74,7 @@ const emptyData: AppData = {
   studyReviews: [],
 }
 async function loadAllData(): Promise<AppData> {
-  // Use Dexie indexes where possible to avoid JS-side sorts. Sessions are
-  // sorted by startAt desc (no useful index there because startAt is just
-  // `id, subjectId, projectId, assignmentId, startAt` — `orderBy('startAt').reverse()`
-  // gives us a native sort that uses the index).
+  // Use Dexie indexes where possible to avoid JS-side sorts.
   const [
     categories, subjects, projects, sessions, progressLogs,
     marks, assignments, habits, habitLogs, streakDays,
@@ -101,7 +98,13 @@ async function loadAllData(): Promise<AppData> {
     db.studyAreas.orderBy('name').toArray(),
     db.studyReviews.orderBy('reviewedAt').reverse().toArray(),
   ])
-
+  console.log('[providers] loadAllData:', {
+    categories: categories.length, subjects: subjects.length, projects: projects.length,
+    sessions: sessions.length, marks: marks.length, assignments: assignments.length,
+    habits: habits.length, habitLogs: habitLogs.length, streakDays: streakDays.length,
+    routines: routines.length, routineLogs: routineLogs.length, activities: activities.length,
+    activityLogs: activityLogs.length, studyAreas: studyAreas.length, studyReviews: studyReviews.length,
+  })
   return {
     categories,
     subjects,
@@ -131,16 +134,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const loadTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const pullInProgress = useRef(false)
   const loadData = useCallback(async () => {
-
     if (pullInProgress.current) return
     if (loadTimer.current) clearTimeout(loadTimer.current)
     loadTimer.current = setTimeout(async () => {
       loadTimer.current = null
       try {
-        setData(await loadAllData())
+        const data = await loadAllData()
+        setData(data)
+        // Make sure isLoading is always cleared once data has loaded at least once
+        setIsInitialLoad(false)
       } catch (e) {
         console.error('loadAllData failed:', e)
-      } finally {
+        // Even on failure, clear the loading state so the UI is usable
         setIsInitialLoad(false)
       }
     }, 80)
