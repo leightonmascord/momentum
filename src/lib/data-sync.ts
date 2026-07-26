@@ -169,7 +169,7 @@ export async function checkCloudState(uid: string): Promise<CloudState> {
   return result
 }
 
-export async function undeleteAllData(): Promise<number> {
+export async function undeleteAllData(uid?: string): Promise<number> {
   let total = 0
   for (const tableKey of SYNC_TABLES) {
     try {
@@ -181,6 +181,15 @@ export async function undeleteAllData(): Promise<number> {
       total += toUndelete.length
       if (toUndelete.length > 0) {
         console.log(`[sync] Undeleted ${toUndelete.length} records in ${tableKey}`)
+        // Push the cleaned records to the cloud so the next sync doesn't
+        // re-overwrite them with the cloud's soft-deleted version.
+        if (uid) {
+          try {
+            await pushTable(uid, tableKey)
+          } catch (e) {
+            console.warn(`Failed to push undeleted ${tableKey} to cloud:`, e)
+          }
+        }
       }
     } catch (e) {
       console.warn(`Failed to undelete in ${tableKey}:`, e)

@@ -138,12 +138,13 @@ function DataRecovery() {
     }
   }
   async function doUndelete() {
+    if (!user?.uid) return
     if (!confirm('Undelete ALL soft-deleted records in this database? This will clear the deletedAt field on every record. The records will reappear in the UI immediately.')) return
     setRecovering(true)
     setError('')
     try {
       const { undeleteAllData } = await import('../../lib/data-sync')
-      const total = await undeleteAllData()
+      const total = await undeleteAllData(user.uid)
       await loadData()
       setRecovering(false)
       alert(`Undelete complete! ${total} records restored.`)
