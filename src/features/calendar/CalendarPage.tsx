@@ -384,16 +384,6 @@ void selectedIndex // consumed by keyboard navigation event listeners for task s
 
   const catColor = (cat: TaskCategory) =>
     TASK_CATEGORIES.find((c) => c.value === cat)?.color ?? '#64748b'
-  // Scroll to today's cell when viewDate changes (Today button navigation)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const todayCell = document.querySelector('[data-today="true"]')
-      if (todayCell) {
-        todayCell.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [viewDate])
   // Time spent per project (sum of session minutes)
 
   return (

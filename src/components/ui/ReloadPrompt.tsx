@@ -1,5 +1,6 @@
 import { useRegisterSW } from 'virtual:pwa-register/react'
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
+
 export function ReloadPrompt() {
   const {
     offlineReady: [offlineReady, setOfflineReady],
@@ -13,26 +14,19 @@ export function ReloadPrompt() {
       console.error('SW registration error', error)
     },
   })
-  // Force reload when the new service worker takes control.
-  // This handles the case where autoUpdate activates the new SW
-  // but the current page is still using old assets.
-  useEffect(() => {
-    function onControllerChange() {
-      window.location.reload()
-    }
-    navigator.serviceWorker?.addEventListener('controllerchange', onControllerChange)
-    return () => {
-      navigator.serviceWorker?.removeEventListener('controllerchange', onControllerChange)
-    }
-  }, [])
+
   const close = useCallback(() => {
     setOfflineReady(false)
     setNeedRefresh(false)
   }, [setOfflineReady, setNeedRefresh])
-  const handleReload = useCallback(() => {
-    updateServiceWorker(true)
+
+  const handleReload = useCallback(async () => {
+    await updateServiceWorker(true)
+    window.location.reload()
   }, [updateServiceWorker])
+
   if (!offlineReady && !needRefresh) return null
+
   return (
     <div
       role="alert"

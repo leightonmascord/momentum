@@ -246,21 +246,21 @@ export default function StudyPage() {
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editArea ? 'Edit Study Area' : 'Add Study Area'}>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Name</label>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g., Japanese particles"
-              className="w-full px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-700"
+              className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Subject</label>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Subject</label>
             <select
               value={subjectId}
               onChange={(e) => setSubjectId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-700"
+              className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
             >
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
@@ -268,23 +268,23 @@ export default function StudyPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Description (optional)</label>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Description (optional)</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Notes, links, or context..."
               rows={3}
-              className="w-full px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-700"
+              className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Tags (comma-separated)</label>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Tags (comma-separated)</label>
             <input
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="grammar, n5, jlpt"
-              className="w-full px-3 py-2 border rounded-md dark:bg-slate-800 dark:border-slate-700"
+              className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
             />
           </div>
           <div className="flex justify-end gap-3 pt-4">
@@ -296,7 +296,7 @@ export default function StudyPage() {
 
       {/* Delete confirmation */}
       <Modal open={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} title="Delete Study Area">
-        <p className="mb-4">Are you sure you want to delete this study area? This action cannot be undone.</p>
+        <p className="mb-4 text-slate-600 dark:text-slate-300">Are you sure you want to delete this study area? This action cannot be undone.</p>
         <div className="flex justify-end gap-3">
           <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
           <Button variant="danger" onClick={() => deleteConfirm && handleDelete(deleteConfirm)}>Delete</Button>

@@ -234,6 +234,23 @@ export default function AIReviewPage() {
       lines.push('')
     }
 
+    // Session notes (recent sessions with notes or focus tags)
+    const detailedSessions = weekSessions.filter(s => (s.note && s.note.trim() !== '') || s.focusTag)
+    if (detailedSessions.length > 0) {
+      lines.push('## Session Notes & Focus Quality')
+      detailedSessions.forEach(s => {
+        const subj = data.subjects.find(sub => sub.id === s.subjectId)
+        const subjName = subj?.name ?? 'Unknown'
+        const date = format(parseISO(s.startAt), 'MMM d')
+        const time = format(parseISO(s.startAt), 'h:mm a')
+        const parts = [`- ${date} ${time} | ${subjName} | ${formatMinutes(s.durationMinutes)}`]
+        if (s.focusTag) parts.push(`Focus: ${s.focusTag}`)
+        if (s.note && s.note.trim() !== '') parts.push(`Note: ${s.note.trim()}`)
+        lines.push(parts.join(' '))
+      })
+      lines.push('')
+    }
+
     lines.push('Please analyse:')
     lines.push('1. Overall productivity and consistency')
     lines.push('2. Balance across subjects')
@@ -241,10 +258,9 @@ export default function AIReviewPage() {
     lines.push('4. Suggestions for improving study habits')
     lines.push('5. Any areas where I\'m over/under-investing time')
     lines.push('6. Recommendations for next week\'s study schedule')
-
+    lines.push('7. Patterns from session notes and focus quality (e.g. recurring challenges, strengths, problem topics)')
     return lines.join('\n')
-  }, [dateRange, stats, settings.dailyTargetMinutes, data.habits, data.habitLogs, data.assignments, data.subjects])
-
+  }, [dateRange, stats, settings.dailyTargetMinutes, data.habits, data.habitLogs, data.assignments, data.subjects, weekSessions])
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(aiPrompt)

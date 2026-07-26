@@ -330,7 +330,7 @@ export default function ReportsPage() {
           <div>
             <div className="text-sm text-slate-500">Total Time</div>
             <div className="text-2xl font-semibold text-slate-800 dark:text-slate-100">
-              {formatHours(totalMinutes)}h
+              {formatHours(totalMinutes)}
             </div>
             {pctChange !== null && period !== 'all' && (
               <div className={cn('text-xs font-medium', pctChange >= 0 ? 'text-green-600' : 'text-red-600')}>
@@ -363,7 +363,7 @@ export default function ReportsPage() {
           </div>
           <div>
             <div className="text-sm text-slate-500">Longest Session</div>
-            <div className="text-2xl font-semibold text-slate-800 dark:text-slate-100">{formatHours(longestSession)}h</div>
+            <div className="text-2xl font-semibold text-slate-800 dark:text-slate-100">{formatHours(longestSession)}</div>
           </div>
         </div>
       </Card>

@@ -76,11 +76,13 @@ export function SchedulePage() {
   )
 
   const todaysActivities = useMemo(
-    () => activities.filter(a => (a.dayMinutes[dow] ?? 0) > 0 || a.scheduledTime).sort((a, b) => {
-      const at = a.scheduledTime ?? '99:99'
-      const bt = b.scheduledTime ?? '99:99'
-      return at.localeCompare(bt)
-    }),
+    () => activities
+      .filter((a) => (a.dayMinutes[dow] ?? 0) > 0)
+      .sort((a, b) => {
+        const at = a.scheduledTime ?? '99:99'
+        const bt = b.scheduledTime ?? '99:99'
+        return at.localeCompare(bt)
+      }),
     [activities, dow]
   )
 

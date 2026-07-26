@@ -346,15 +346,9 @@ export default function MarksPage() {
               <input id="mark-total" className="input" type="number" value={form.total} onChange={(e) => updateField('total', e.target.value)} placeholder="100" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="label" htmlFor="mark-weight">Weight (%)</label>
-              <input id="mark-weight" className="input" type="number" min="0" max="100" value={form.weight} onChange={(e) => updateField('weight', e.target.value)} placeholder="20" />
-            </div>
-            <div>
-              <label className="label" htmlFor="mark-grade">Letter Grade (optional)</label>
-              <input id="mark-grade" className="input" value={form.letterGrade} onChange={(e) => updateField('letterGrade', e.target.value)} placeholder="Auto from %" />
-            </div>
+          <div>
+            <label className="label" htmlFor="mark-weight">Weight (%)</label>
+            <input id="mark-weight" className="input" type="number" min="0" max="100" value={form.weight} onChange={(e) => updateField('weight', e.target.value)} placeholder="20" />
           </div>
           <div>
             <label className="label" htmlFor="mark-average">Grade Average (optional)</label>

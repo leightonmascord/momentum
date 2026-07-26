@@ -26,8 +26,10 @@ import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS } from '../../lib/use-dashboard-widgets'
+import { SortableWidget } from '../../components/widgets/SortableWidget'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
-import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 
 const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
 const CELEBRATION_KEY = 'momentum-last-celebration'
@@ -120,8 +122,8 @@ function SessionRow({
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setMenuSessionId(null)} />
                 <div className="absolute right-0 z-30 mt-1 w-36 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setEditLog(session); setEditDuration(session.durationMinutes); setEditDate(toLocalDateString(session.startAt)); setEditSubjectId(session.subjectId); setMenuSessionId(null) }}>
-                    Edit time
+                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setViewSession(session); setViewModalOpen(true); setMenuSessionId(null) }}>
+                    View details
                   </button>
                   <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { copySessionInfo(session); setMenuSessionId(null) }}>
                     Copy
@@ -143,7 +145,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, setWidgetConfig, setWidgetSize, reorderWidgets } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, setWidgetSize } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -156,6 +158,32 @@ export default function Dashboard() {
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
   const [batchSubjectId, setBatchSubjectId] = useState('')
   const [showActivityConfirmation, setShowActivityConfirmation] = useState(true)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (over && active.id !== over.id) {
+      const fromIndex = visibleWidgets.indexOf(active.id as string)
+      const toIndex = visibleWidgets.indexOf(over.id as string)
+      const fromWidget = active.id as string
+      const toWidget = over.id as string
+      setVisibleWidgets(arrayMove(visibleWidgets, fromIndex, toIndex))
+      push({
+        description: 'Reordered widgets',
+        undo: async () => setVisibleWidgets(prev => {
+          const newIdx = prev.indexOf(toWidget)
+          const oldIdx = prev.indexOf(fromWidget)
+          if (newIdx === -1 || oldIdx === -1) return prev
+          return arrayMove(prev, newIdx, oldIdx)
+        }),
+        redo: async () => setVisibleWidgets(prev => {
+          const newIdx = prev.indexOf(fromWidget)
+          const oldIdx = prev.indexOf(toWidget)
+          if (newIdx === -1 || oldIdx === -1) return prev
+          return arrayMove(prev, newIdx, oldIdx)
+        }),
+      })
+    }
+  }
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   // Exclude soft-deleted sessions from streak / stats calculations.
@@ -481,14 +509,6 @@ export default function Dashboard() {
       subjectColor: data.subjects.find((sub) => sub.id === s.subjectId)?.color ?? '#94a3b8',
     }))
   const recentSessions = allRecent.slice(0, recentLimit)
-
-
-  const sizeClasses: Record<string, string> = {
-    small: 'lg:col-span-1 lg:row-span-1',
-    medium: 'lg:col-span-2 lg:row-span-1',
-    large: 'lg:col-span-3 lg:row-span-2',
-  }
-
   function removeWidgetWithUndo(id: string) {
     const previousIndex = visibleWidgets.indexOf(id)
     setVisibleWidgets(prev => prev.filter(w => w !== id))
@@ -504,29 +524,9 @@ export default function Dashboard() {
     })
   }
 
+
   function renderWidget(id: string): React.ReactNode {
     switch (id) {
-      case 'stats':
-        return (
-          <div className="flex flex-col items-center justify-center py-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-primary-600 dark:text-primary-400">
-              Today&apos;s Study Time
-            </div>
-            <div className="mt-1 text-3xl font-bold text-slate-800 dark:text-slate-100">
-              {formatTotalToday(liveTotalTodayMinutes, isTimerActive())}
-            </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Daily target: {formatMinutes(settings.dailyTargetMinutes)}
-            </div>
-            {goalPct >= 100 ? (
-              <div className="text-xs font-medium text-green-600 dark:text-green-400">Target reached!</div>
-            ) : (
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                {formatMinutes(settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes))} remaining
-              </div>
-            )}
-          </div>
-        )
       case 'pomodoro':
         return (
           <div data-tour="timer" className="rounded-lg border-2 border-primary-500 p-4">
@@ -536,11 +536,17 @@ export default function Dashboard() {
       case 'today':
         return (
           <Card>
-            <div className="mb-4 grid grid-cols-2 gap-4 border-b border-slate-200 pb-3 dark:border-slate-700">
+            <div className="mb-4 grid grid-cols-3 gap-4 border-b border-slate-200 pb-3 dark:border-slate-700">
               <div>
                 <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Today</div>
                 <div className="mt-0.5 text-2xl font-bold text-slate-800 dark:text-slate-100">
                   {formatTotalToday(liveTotalTodayMinutes, isTimerActive())}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  {goalPct >= 100
+                    ? <span className="text-green-600 dark:text-green-400 font-medium">Target reached!</span>
+                    : `${formatMinutes(settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes))} of ${formatMinutes(settings.dailyTargetMinutes)} goal`
+                  }
                 </div>
               </div>
               <div>
@@ -1223,35 +1229,34 @@ export default function Dashboard() {
       {showActivityConfirmation && (
         <ActivityConfirmationCard onDismiss={() => setShowActivityConfirmation(false)} />
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-[minmax(80px,auto)] grid-flow-dense">
-        {visibleWidgets.map(id => {
-          const size = widgetConfigs[id]?.size || 'small'
-          const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-          const label = meta?.label || id
-          const widgetProps = {
-            id,
-            label,
-            size,
-            onRemove: () => removeWidgetWithUndo(id),
-            onSetSize: (s: 'small' | 'medium' | 'large') => setWidgetSize(id, s),
-            onReorder: reorderWidgets,
-            ...(id === 'calendar' || id === 'recent' ? { defaultOpen: false } : {}),
-          } as const
-          return (
-            <div key={id} className={cn(sizeClasses[size], 'h-full')}>
-              <DashboardWidget {...widgetProps}>
-                {renderWidget(id)}
-              </DashboardWidget>
-            </div>
-          )
-        })}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-[minmax(80px,auto)] grid-flow-dense">
+            {visibleWidgets.map(id => {
+              const cols = widgetConfigs[id]?.cols ?? 1
+              const rows = widgetConfigs[id]?.rows ?? 1
+              const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+              const label = meta?.label || id
+              const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
+              const rowClass = rows === 3 ? 'lg:row-span-3' : rows === 2 ? 'lg:row-span-2' : 'lg:row-span-1'
+            return (
+              <div key={id} className={cn(colClass, rowClass, 'h-full')}>
+                <SortableWidget id={id} label={label} onRemove={() => removeWidgetWithUndo(id)}>
+                  {renderWidget(id)}
+                </SortableWidget>
+              </div>
+            )
+          })}
+          </div>
+        </SortableContext>
+      </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
           {DASHBOARD_WIDGETS_METADATA.map((w) => {
             const visIdx = visibleWidgets.indexOf(w.id)
             const isVisible = visIdx !== -1
-            const size = widgetConfigs[w.id]?.size || 'small'
+            const cols = widgetConfigs[w.id]?.cols ?? 1
+            const rows = widgetConfigs[w.id]?.rows ?? 1
             return (
               <div key={w.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
                 <span className="cursor-grab text-slate-400" title="Drag to reorder">⠿</span>
@@ -1262,21 +1267,13 @@ export default function Dashboard() {
                   className="rounded border-slate-300"
                 />
                 <span className="flex-1 text-sm">{w.label}</span>
-                <div className="flex gap-1">
-                  {(['small', 'medium', 'large'] as const).map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setWidgetConfig(w.id, { size: s })}
-                      className={cn(
-                        'px-2 py-0.5 text-xs rounded font-medium transition',
-                        size === s
-                          ? 'bg-primary-500 text-white'
-                          : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200'
-                      )}
-                    >
-                      {s === 'small' ? 'S' : s === 'medium' ? 'M' : 'L'}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500">Size</span>
+                  <button onClick={() => setWidgetSize(w.id, cols - 1, rows)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
+                  <span className="text-xs w-8 text-center">{cols}×{rows}</span>
+                  <button onClick={() => setWidgetSize(w.id, cols + 1, rows)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
+                  <button onClick={() => setWidgetSize(w.id, cols, rows - 1)} disabled={rows <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30 ml-1">↑</button>
+                  <button onClick={() => setWidgetSize(w.id, cols, rows + 1)} disabled={rows >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">↓</button>
                 </div>
               </div>
             )
@@ -1500,6 +1497,21 @@ export default function Dashboard() {
         session={viewSession}
         open={viewModalOpen}
         onClose={() => { setViewModalOpen(false); setViewSession(null) }}
+        subjects={data.subjects}
+        onSave={async (updates) => {
+          if (!viewSession) return
+          await db.sessions.update(viewSession.id, {
+            subjectId: updates.subjectId,
+            startAt: updates.startAt,
+            endAt: updates.endAt,
+            durationMinutes: updates.durationMinutes,
+            focusTag: updates.focusTag ?? undefined,
+            note: updates.note,
+            updatedAt: isoNow(),
+          })
+          await loadData()
+          setViewSession({ ...viewSession, ...updates })
+        }}
         subjectName={viewSession ? data.subjects.find((s) => s.id === viewSession.subjectId)?.name : undefined}
         projectName={viewSession?.projectId ? data.projects.find((p) => p.id === viewSession.projectId)?.name : undefined}
       />

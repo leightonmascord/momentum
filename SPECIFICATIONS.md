@@ -276,3 +276,9 @@ These are documented known issues and are NOT yet implemented:
 - Dashboard widgets: free resizing with min/max (replace S/M/L presets)
 - Remove autolog widget from dashboard; convert to popup/modal
 - Remove log-time widget (redundant)
+
+## 15. Implementation Notes / Common Pitfalls
+
+- **Do not widen union-typed fields to plain strings in editing UIs.** Example: `Session.focusTag` is a strict union (`'focused' | 'distracted' | 'group' | 'revision' | undefined`), so modal/editor form state and save handlers must use the same union type rather than `string | null`.
+- **When replacing or refactoring JSX blocks, re-check parent wrappers before build/deploy.** Example: merging dashboard widgets temporarily dropped the `Card` wrapper around the `today` widget, which caused JSX parent-element errors and broken layout.
+- **When patching files repeatedly, re-ground on the latest file hash before editing.** Dashboard edits in this repo are large enough that stale-tag inserts can land inside JSX blocks if not re-read first.

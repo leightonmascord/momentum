@@ -15,7 +15,6 @@ export const MAX_WIDGET_ROWS = 3
 
 export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
   { id: 'today',        label: 'Today' },
-  { id: 'streak-goal',  label: 'Study Streak & Daily Goal' },
   { id: 'pomodoro',     label: 'Study Timer' },
   { id: 'study-review', label: 'Study Review' },
   { id: 'calendar',     label: 'Study Calendar' },

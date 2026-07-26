@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '../../lib/utils'
@@ -14,6 +14,8 @@ import { OnboardingTour } from '../ui/OnboardingTour'
 import { DevBanner } from '../ui/DevBanner'
 import { CommandPalette, useCommandPalette } from '../ui/CommandPalette'
 import { useFocusMode } from '../../lib/use-focus-mode'
+import { useData } from '../../app/providers'
+import { format } from 'date-fns'
 
   const NAV_ITEMS = [
     { to: '/', label: 'Dashboard', icon: '🏠' },
@@ -138,6 +140,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('momentum:command-palette', onCmdPalette)
   }, [toggle])
   const navigate = useNavigate()
+  const { data } = useData()
+  const dueCount = useMemo(() => {
+    const today = new Date()
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = format(tomorrow, 'yyyy-MM-dd')
+    return data.assignments.filter((a) => !a.deletedAt && !a.completed && a.dueDate !== '' && a.dueDate <= tomorrowStr).length
+  }, [data.assignments])
   const location = useLocation()
 
   // ── Global keyboard shortcuts ──
@@ -446,6 +455,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
             >
               <span aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
+              {item.to === '/calendar' && dueCount > 0 && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">{dueCount}</span>
+              )}
             </NavLink>
           ))}
         </nav>
