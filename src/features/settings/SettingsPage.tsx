@@ -103,6 +103,53 @@ function DataRecovery() {
   const [checking, setChecking] = useState(false)
   const [diag, setDiag] = useState<{ totalRecords: number; tables: Record<string, { cloud: number; local: number; deleted?: number }> } | null>(null)
   const [error, setError] = useState('')
+  const [backups, setBackups] = useState<Array<{ date: string; totalRecords: number; createdAt: string }>>([])
+  const [loadingBackups, setLoadingBackups] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
+  async function loadBackupsList() {
+    if (!user?.uid) return
+    setLoadingBackups(true)
+    try {
+      const { listBackups } = await import('../../lib/cloud-backup')
+      const list = await listBackups(user.uid)
+      setBackups(list.map((b) => ({ date: b.date, totalRecords: b.totalRecords, createdAt: b.createdAt })))
+    } catch (e) {
+      console.warn('Failed to list backups:', e)
+    } finally {
+      setLoadingBackups(false)
+    }
+  }
+  async function doManualBackup() {
+    if (!user?.uid) return
+    setBackingUp(true)
+    try {
+      const { createBackup } = await import('../../lib/cloud-backup')
+      const meta = await createBackup(user.uid)
+      alert(`Backup created for ${meta.date} (${meta.totalRecords} records).`)
+      await loadBackupsList()
+    } catch (e) {
+      alert('Backup failed: ' + String(e))
+    } finally {
+      setBackingUp(false)
+    }
+  }
+  async function doRestore(date: string) {
+    if (!user?.uid) return
+    if (!confirm(`Restore all data from backup ${date}? This will overwrite your current cloud data. Then a force re-pull will load the restored data into the app.`)) return
+    setRecovering(true)
+    try {
+      const { restoreFromBackup } = await import('../../lib/cloud-backup')
+      const total = await restoreFromBackup(user.uid, date)
+      const { forcePullAllData } = await import('../../lib/data-sync')
+      await forcePullAllData(user.uid)
+      await loadData()
+      alert(`Restored ${total} records from ${date}.`)
+    } catch (e) {
+      alert('Restore failed: ' + String(e))
+    } finally {
+      setRecovering(false)
+    }
+  }
   async function checkCloud() {
     if (!user?.uid) return
     setChecking(true)
@@ -162,6 +209,7 @@ function DataRecovery() {
     }
   }
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle>Data Recovery</CardTitle>
@@ -231,6 +279,54 @@ function DataRecovery() {
         </div>
       )}
     </Card>
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Cloud Backups</CardTitle>
+      </CardHeader>
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        Automatic daily snapshots of your data are kept in the cloud for 3 days. If your data ever gets corrupted, you can restore from a previous backup.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="secondary" size="sm" onClick={loadBackupsList} disabled={loadingBackups}>
+          {loadingBackups ? 'Loading...' : 'List Backups'}
+        </Button>
+        <Button variant="primary" size="sm" onClick={doManualBackup} disabled={backingUp}>
+          {backingUp ? 'Backing up...' : 'Create Backup Now'}
+        </Button>
+      </div>
+      {backups.length > 0 && (
+        <div className="mt-3 rounded border border-slate-200 dark:border-slate-700">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+                <th className="px-2 py-1 text-left">Date</th>
+                <th className="px-2 py-1 text-right">Records</th>
+                <th className="px-2 py-1 text-right">Created</th>
+                <th className="px-2 py-1 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {backups.map((b) => (
+                <tr key={b.date} className="border-b border-slate-100 dark:border-slate-800">
+                  <td className="px-2 py-1 font-mono">{b.date}</td>
+                  <td className="px-2 py-1 text-right">{b.totalRecords}</td>
+                  <td className="px-2 py-1 text-right">{new Date(b.createdAt).toLocaleString()}</td>
+                  <td className="px-2 py-1 text-right">
+                    <Button variant="danger" size="sm" onClick={() => doRestore(b.date)} disabled={recovering}>
+                      Restore
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-2 py-1 text-xs text-slate-500">
+            Older than 3 days are pruned automatically. Use Restore to overwrite your current data with a snapshot.
+          </div>
+        </div>
+      )}
+    </Card>
+    </>
   )
 }
 

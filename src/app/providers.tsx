@@ -159,7 +159,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       pullInProgress.current = true
       try {
         const uid = localStorage.getItem('momentum-cloud-uid')
-        if (uid) await pullAllData(uid)
+        if (uid) {
+          await pullAllData(uid)
+          try {
+            const { ensureDailyBackup } = await import('../lib/cloud-backup')
+            await ensureDailyBackup(uid)
+          } catch (e) {
+            console.warn('[backup] Failed to ensure daily backup:', e)
+          }
+        }
       } finally {
         pullInProgress.current = false
       }
