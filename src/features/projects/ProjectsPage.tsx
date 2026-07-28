@@ -40,6 +40,7 @@ export default function ProjectsPage() {
   const [formData, setFormData] = useState<ProjectFormData>(emptyFormData)
   const [isSaving, setIsSaving] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'active' | 'completed' | 'all'>('active')
+  const [error, setError] = useState('')
 
   const visibleProjects = useMemo(
     () => data.projects.filter((p) => !p.deletedAt && (statusFilter === 'all' || (statusFilter === 'active' ? !p.completed : p.completed === true))),
@@ -120,46 +121,76 @@ export default function ProjectsPage() {
   const handleDelete = async () => {
     if (!deleteProject) return
     setIsSaving(true)
+    setError('')
     try {
       const now = isoNow()
       const originalProject = { ...deleteProject }
       const projectId = deleteProject.id
 
-
-      // Soft-delete project, assignments, and sessions
-      await db.projects.update(projectId, { deletedAt: now, updatedAt: now })
-      await db.assignments.where('projectId').equals(projectId).modify({ deletedAt: now, updatedAt: now })
-      await db.sessions.where('projectId').equals(projectId).modify({ deletedAt: now, updatedAt: now })
+      // Soft-delete project + cascade to assignments and sessions in a single
+      // transaction so all related writes succeed or fail together.
+      await db.transaction(
+        'rw',
+        db.projects,
+        db.assignments,
+        db.sessions,
+        async () => {
+          await db.projects.update(projectId, { deletedAt: now, updatedAt: now })
+          await db.assignments.where('projectId').equals(projectId).modify({ deletedAt: now, updatedAt: now })
+          await db.sessions.where('projectId').equals(projectId).modify({ deletedAt: now, updatedAt: now })
+        }
+      )
       await loadData()
 
       pushUndo({
         description: `Deleted project "${originalProject.name}"`,
         undo: async () => {
-          await db.projects.update(projectId, { deletedAt: null, updatedAt: isoNow() })
-          await db.assignments.where('projectId').equals(projectId).modify({
-            deletedAt: null,
-            updatedAt: isoNow()
-          })
-          await db.sessions.where('projectId').equals(projectId).modify({
-            deletedAt: null,
-            updatedAt: isoNow()
-          })
+          await db.transaction(
+            'rw',
+            db.projects,
+            db.assignments,
+            db.sessions,
+            async () => {
+              await db.projects.update(projectId, { deletedAt: null, updatedAt: isoNow() })
+              await db.assignments.where('projectId').equals(projectId).modify({
+                deletedAt: null,
+                updatedAt: isoNow()
+              })
+              await db.sessions.where('projectId').equals(projectId).modify({
+                deletedAt: null,
+                updatedAt: isoNow()
+              })
+            }
+          )
           await loadData()
         },
         redo: async () => {
-          await db.projects.update(projectId, { deletedAt: now, updatedAt: isoNow() })
-          await db.assignments.where('projectId').equals(projectId).modify({
-            deletedAt: now,
-            updatedAt: isoNow()
-          })
-          await db.sessions.where('projectId').equals(projectId).modify({
-            deletedAt: now,
-            updatedAt: isoNow()
-          })
+          await db.transaction(
+            'rw',
+            db.projects,
+            db.assignments,
+            db.sessions,
+            async () => {
+              await db.projects.update(projectId, { deletedAt: now, updatedAt: isoNow() })
+              await db.assignments.where('projectId').equals(projectId).modify({
+                deletedAt: now,
+                updatedAt: isoNow()
+              })
+              await db.sessions.where('projectId').equals(projectId).modify({
+                deletedAt: now,
+                updatedAt: isoNow()
+              })
+            }
+          )
           await loadData()
         },
       })
       setDeleteProject(null)
+    } catch (e) {
+      console.error('[deleteProject] Failed:', e)
+      setError(`Failed to delete project: ${String(e)}`)
+      // Refresh UI so a partially-deleted state doesn't linger
+      await loadData()
     } finally {
       setIsSaving(false)
     }
@@ -377,6 +408,7 @@ export default function ProjectsPage() {
             </span>
             ? This will archive the project.
           </p>
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setDeleteProject(null)}>
               Cancel

@@ -131,6 +131,11 @@ export class AppDB extends Dexie {
         }
       })
     })
+    // v16: add projectId index to assignments so project soft-delete can
+    // cascade-update assignments via a Dexie indexed query.
+    this.version(16).stores({
+      assignments: 'id, subjectId, projectId, dueDate, completed, category',
+    })
   }
 }
 
