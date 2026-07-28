@@ -31,6 +31,10 @@ interface DashboardWidgetProps {
  * Drag-and-drop is delegated to the parent (DndContext + SortableContext)
  * via `useSortable`. The wrapper applies the transform but suppresses the
  * default ghost so the parent can use a DragOverlay for a clean preview.
+ *
+ * Uses a named Tailwind group (`group/widget`) so it does not collide with
+ * any inner `group` utility (e.g. heatmap tooltips inside the study-streak
+ * widget), which would cause all child tooltips to show on widget hover.
  */
 export function DashboardWidget({
   id,
@@ -77,8 +81,6 @@ export function DashboardWidget({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Visual transform: drag follows cursor while a DragOverlay (managed by
-  // parent) shows a translucent preview elsewhere in the DOM.
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -90,17 +92,16 @@ export function DashboardWidget({
       ref={setNodeRef}
       style={mode === 'freeform' ? { ...style, width, height } : style}
       className={cn(
-        'group relative h-full w-full rounded-lg border bg-white shadow-sm transition-shadow dark:bg-slate-800',
+        'group/widget relative h-full w-full overflow-hidden rounded-lg border bg-white shadow-sm dark:bg-slate-800',
         'border-slate-200 dark:border-slate-700',
         className
       )}
       data-widget-id={id}
     >
-      {/* Drag handle header */}
       <div
         {...attributes}
         {...listeners}
-        className="flex cursor-grab items-center justify-between rounded-t-lg border-b border-slate-200 px-3 py-2 active:cursor-grabbing dark:border-slate-700"
+        className="flex cursor-grab items-center justify-between border-b border-slate-200 px-3 py-2 active:cursor-grabbing dark:border-slate-700"
       >
         <div className="flex items-center gap-2">
           <svg
@@ -153,11 +154,11 @@ export function DashboardWidget({
           )}
         </div>
       </div>
-      <div className="h-[calc(100%-3rem)] overflow-auto p-3">{children}</div>
+      <div className="h-[calc(100%-2.5rem)] overflow-hidden p-3">{children}</div>
       {mode === 'freeform' && onResizeFreeform && (
         <div
           onPointerDown={onFreeformResizePointerDown}
-          className="absolute bottom-1 right-1 h-4 w-4 cursor-nwse-resize rounded-sm bg-slate-300 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-slate-600"
+          className="absolute bottom-1 right-1 z-10 h-5 w-5 cursor-nwse-resize rounded-sm bg-slate-300 opacity-0 transition-opacity group-hover/widget:opacity-100 dark:bg-slate-600"
           aria-label="Resize widget"
         />
       )}

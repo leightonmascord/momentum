@@ -28,7 +28,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE, MIN_WIDGET_PX_W, MIN_WIDGET_PX_H, MAX_WIDGET_PX_W, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { MasonryLayout } from '../../components/widgets/MasonryLayout'
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
+import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
@@ -217,7 +217,7 @@ function SessionRow({
 }
 
 export default function Dashboard() {
-  const { data, isLoading, loadData } = useData()
+  const { data, isLoading, loadData, mutate } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
   const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
@@ -419,14 +419,16 @@ export default function Dashboard() {
         noTime
       }
       const subjectName = data.subjects.find((s) => s.id === actualSubjectId)?.name ?? 'Unknown Subject'
-      // Parallel save: DB + background maintenance + load
+      // Parallel save: DB + background maintenance
       await Promise.all([
         db.sessions.add(session),
         updateRoutineLogsForSession(session),
         updateStreakDayForSession(session)
       ])
+      // Instant UI update — add session to context without waiting for full reload
+      mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] }))
       syncSession(session, subjectName) // Fire-and-forget sync
-      await loadData() // Refresh
+      void loadData() // Background full refresh for consistency
       let description = `Logged ${logDuration}m${project ? ` for ${project.name}` : ` study for ${subjectName}`}`
       if (task) description += ` (${task.title})`
       push({
@@ -494,9 +496,11 @@ export default function Dashboard() {
     const session = data.sessions.find((s) => s.id === id)
     if (!session) return
     await db.sessions.delete(id)
+    // Instant UI update — remove from context without waiting for full reload
+    mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== id) }))
     syncSessionDelete(id)
     await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)])
-    await loadData()
+    void loadData()
     push({
       description: `Deleted session (${session.durationMinutes}m)`,
       undo: async () => { await db.sessions.add(session); await Promise.all([updateRoutineLogsForSession(session), updateStreakDayForSession(session)]); await syncSession(session, data.subjects.find(s => s.id === session.subjectId)?.name ?? 'Unknown'); await loadData() },
@@ -1377,7 +1381,7 @@ export default function Dashboard() {
       )}
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={pointerWithin}
         onDragStart={(event) => setActiveId(event.active.id as string)}
         onDragEnd={(event) => {
           setActiveId(null)
@@ -1410,7 +1414,7 @@ export default function Dashboard() {
             </div>
           </SortableContext>
         ) : (
-          <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
+          <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
             <div ref={containerRef} data-tour="freeform-area" className="relative w-full">
               {containerWidth > 0 && (
                 <MasonryLayout
@@ -1448,10 +1452,10 @@ export default function Dashboard() {
             </div>
           </SortableContext>
         )}
-        <DragOverlay>
+        <DragOverlay dropAnimation={null}>
           {activeId ? (
-            <div className="rounded-lg border-2 border-primary-400 bg-white/90 p-4 shadow-xl dark:bg-slate-800/90">
-              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            <div className="w-64 rounded-lg border-2 border-primary-500 bg-primary-50/95 p-4 shadow-2xl dark:bg-primary-900/30">
+              <p className="text-sm font-semibold text-primary-800 dark:text-primary-200">
                 {DASHBOARD_WIDGETS_METADATA.find(w => w.id === activeId)?.label ?? activeId}
               </p>
             </div>
@@ -1484,7 +1488,7 @@ export default function Dashboard() {
             Freeform
           </button>
         </div>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
             <div className="space-y-2 max-h-[60vh] overflow-y-auto">
               {visibleWidgets.map((id) => {
