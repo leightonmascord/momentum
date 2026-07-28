@@ -342,6 +342,15 @@ export function SchedulePage() {
               onAttended={() => attendActivity(activity)}
               onSkip={() => skipActivity(activity)}
               onEdit={() => setActivityEditing(activity)}
+              onUndo={() => {
+                const log = getActivityLogForToday(activity.id)
+                if (log) {
+                    db.activityLogs.delete(log.id).then(() => {
+                        db.sessions.where({ note: `Activity: ${activity.name}` }).delete()
+                        loadData()
+                    })
+                }
+              }}
             />
           ))}
 
@@ -606,10 +615,11 @@ function ActivityCard(props: {
   onAttended: () => void
   onSkip: () => void
   onEdit: () => void
+  onUndo: () => void
   isExpanded: boolean
   onToggleExpand: () => void
 }) {
-  const { activity, subjectName, existingLog, onAttended, onSkip, onEdit, isExpanded, onToggleExpand } = props
+  const { activity, subjectName, existingLog, onAttended, onSkip, onEdit, onUndo, isExpanded, onToggleExpand } = props
   const mins = activity.dayMinutes[new Date().getDay() as DayOfWeek] ?? activity.duration ?? 0
   if (existingLog) {
     if (existingLog.status === 'completed') {
@@ -639,7 +649,8 @@ function ActivityCard(props: {
             <span className="text-sm">{mins}m</span>
             <span className="text-slate-400">·</span>
             <span className="text-sm">Done {doneTime}</span>
-            <button onClick={onToggleExpand} className="ml-auto text-xs text-slate-500 hover:underline">Collapse</button>
+            <button onClick={onUndo} className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">Mark as undone</button>
+            <button onClick={onToggleExpand} className="text-xs text-slate-500 hover:underline">Collapse</button>
           </div>
           {subjectName && <div className="mt-3 text-sm text-slate-600 dark:text-slate-400">{subjectName}</div>}
           {activity.scheduledTime && (
@@ -670,7 +681,8 @@ function ActivityCard(props: {
             <span className="font-medium text-slate-700 dark:text-slate-200">{activity.name}</span>
             <span className="text-slate-400">·</span>
             <span className="text-sm text-amber-600 dark:text-amber-400">Skipped</span>
-            <button onClick={onToggleExpand} className="ml-auto text-xs text-slate-500 hover:underline">Collapse</button>
+            <button onClick={onUndo} className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">Mark as undone</button>
+            <button onClick={onToggleExpand} className="text-xs text-slate-500 hover:underline">Collapse</button>
           </div>
           {subjectName && <div className="mt-3 text-sm text-slate-600 dark:text-slate-400">{subjectName}</div>}
         </Card>
