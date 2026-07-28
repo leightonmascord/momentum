@@ -1,95 +1,166 @@
-import React, { ReactNode, useRef, useState } from 'react'
+import { ReactNode, useRef } from 'react'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { cn } from '../../lib/utils'
+import { MIN_WIDGET_PX_W, MIN_WIDGET_PX_H, MAX_WIDGET_PX_W, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
+
+type Mode = 'grid' | 'freeform'
 
 interface DashboardWidgetProps {
   id: string
   label: string
+  mode: Mode
+  /** Grid-mode width in columns (1-3). */
+  cols: number
+  /** Freeform-mode pixel size. */
+  width?: number
+  height?: number
+  onResizeGrid?: (cols: number) => void
+  onResizeFreeform?: (size: { width: number; height: number }) => void
   onRemove?: () => void
-  onReorder?: (fromId: string, toId: string) => void
   children: ReactNode
   className?: string
 }
 
+/**
+ * Unified dashboard widget wrapper.
+ *
+ * - Grid mode: container with column-span, side resize button cycles cols.
+ * - Freeform mode: absolute positioning, drag corner handle resizes pixels.
+ *
+ * Drag-and-drop is delegated to the parent (DndContext + SortableContext)
+ * via `useSortable`. The wrapper applies the transform but suppresses the
+ * default ghost so the parent can use a DragOverlay for a clean preview.
+ */
 export function DashboardWidget({
   id,
   label,
+  mode,
+  cols,
+  width,
+  height,
+  onResizeGrid,
+  onResizeFreeform,
   onRemove,
-  onReorder,
   children,
   className,
 }: DashboardWidgetProps) {
-  const dragRef = useRef<HTMLDivElement>(null)
-  const [dragging, setDragging] = useState(false)
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
 
-  const handleDragStart = (e: React.DragEvent<HTMLElement>) => {
-    e.dataTransfer.setData('text/plain', id)
-    e.dataTransfer.effectAllowed = 'move'
-    setDragging(true)
-  }
+  const resizeRef = useRef<{
+    startX: number
+    startY: number
+    startW: number
+    startH: number
+  } | null>(null)
 
-  const handleDragEnd = () => {
-    setDragging(false)
-  }
-
-  const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
+  const onFreeformResizePointerDown = (e: React.PointerEvent) => {
+    if (!onResizeFreeform || width === undefined || height === undefined) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-  }
-
-  const handleDrop = (e: React.DragEvent<HTMLElement>) => {
-    e.preventDefault()
-    const fromId = e.dataTransfer.getData('text/plain')
-    if (fromId && fromId !== id && onReorder) {
-      onReorder(fromId, id)
+    e.stopPropagation()
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, startW: width, startH: height }
+    const onMove = (ev: PointerEvent) => {
+      const r = resizeRef.current
+      if (!r) return
+      const dx = ev.clientX - r.startX
+      const dy = ev.clientY - r.startY
+      const newW = Math.max(MIN_WIDGET_PX_W, Math.min(MAX_WIDGET_PX_W, r.startW + dx))
+      const newH = Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, r.startH + dy))
+      onResizeFreeform({ width: newW, height: newH })
     }
-    setDragging(false)
+    const onUp = () => {
+      resizeRef.current = null
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Visual transform: drag follows cursor while a DragOverlay (managed by
+  // parent) shows a translucent preview elsewhere in the DOM.
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
   }
 
   return (
     <div
-      ref={dragRef}
-      data-widget-id={id}
+      ref={setNodeRef}
+      style={mode === 'freeform' ? { ...style, width, height } : style}
       className={cn(
-        'relative bg-white dark:bg-slate-800 rounded-lg shadow-sm border h-full',
-        'transition-all duration-150',
-        dragging
-          ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20 opacity-60 scale-95'
-          : 'border-slate-200 dark:border-slate-700 opacity-100',
+        'group relative h-full w-full rounded-lg border bg-white shadow-sm transition-shadow dark:bg-slate-800',
+        'border-slate-200 dark:border-slate-700',
         className
       )}
+      data-widget-id={id}
     >
+      {/* Drag handle header */}
       <div
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700 cursor-grab active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
+        className="flex cursor-grab items-center justify-between rounded-t-lg border-b border-slate-200 px-3 py-2 active:cursor-grabbing dark:border-slate-700"
       >
-        <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 select-none">{label}</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Drag to reorder</p>
-          </div>
-        </div>
-        {onRemove && (
-          <button
-            onClick={onRemove}
-            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300"
-            aria-label="Remove widget"
+        <div className="flex items-center gap-2">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-4 w-4 text-slate-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+          </svg>
+          <h3 className="select-none text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {label}
+          </h3>
+        </div>
+        <div className="flex items-center gap-1">
+          {mode === 'grid' && onResizeGrid && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onResizeGrid(cols >= 3 ? 1 : cols + 1)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="rounded p-1 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+              title={`Width: ${cols} of 3`}
+            >
+              {cols}w
+            </button>
+          )}
+          {onRemove && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove()
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700"
+              aria-label="Remove widget"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
-      <div className="p-3">{children}</div>
+      <div className="h-[calc(100%-3rem)] overflow-auto p-3">{children}</div>
+      {mode === 'freeform' && onResizeFreeform && (
+        <div
+          onPointerDown={onFreeformResizePointerDown}
+          className="absolute bottom-1 right-1 h-4 w-4 cursor-nwse-resize rounded-sm bg-slate-300 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-slate-600"
+          aria-label="Resize widget"
+        />
+      )}
     </div>
   )
 }

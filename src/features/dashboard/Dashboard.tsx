@@ -25,10 +25,10 @@ import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
-import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
-import { SortableWidget } from '../../components/widgets/SortableWidget'
-import { FreeformWidget } from '../../components/widgets/FreeformWidget'
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE, MIN_WIDGET_PX_W, MIN_WIDGET_PX_H, MAX_WIDGET_PX_W, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
+import { DashboardWidget } from '../../components/widgets/DashboardWidget'
+import { MasonryLayout } from '../../components/widgets/MasonryLayout'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
@@ -227,12 +227,24 @@ export default function Dashboard() {
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null)
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
-  const [fabOpen, setFabOpen] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const el = containerRef.current
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setContainerWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
   const [batchSubjectId, setBatchSubjectId] = useState('')
   const [showActivityConfirmation, setShowActivityConfirmation] = useState(true)
+  const [fabOpen, setFabOpen] = useState(false)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -1363,10 +1375,18 @@ export default function Dashboard() {
       {showActivityConfirmation && (
         <ActivityConfirmationCard onDismiss={() => setShowActivityConfirmation(false)} />
       )}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={(event) => setActiveId(event.active.id as string)}
+        onDragEnd={(event) => {
+          setActiveId(null)
+          handleDragEnd(event)
+        }}
+      >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
@@ -1374,15 +1394,16 @@ export default function Dashboard() {
                 const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
                   <div key={id} className={cn(colClass, 'h-full')}>
-                    <SortableWidget
+                    <DashboardWidget
                       id={id}
                       label={label}
+                      mode="grid"
                       cols={cols}
-                      onResize={(c) => setWidgetSize(id, c, 1)}
+                      onResizeGrid={(c) => setWidgetSize(id, c, 1)}
                       onRemove={() => removeWidgetWithUndo(id)}
                     >
                       {renderWidget(id)}
-                    </SortableWidget>
+                    </DashboardWidget>
                   </div>
                 )
               })}
@@ -1390,38 +1411,52 @@ export default function Dashboard() {
           </SortableContext>
         ) : (
           <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
-            <div
-              data-tour="freeform-area"
-              className="grid grid-cols-12 gap-4"
-              style={{ gridAutoFlow: 'dense' }}
-            >
-              {visibleWidgets.map(id => {
-                const config = widgetConfigs[id] ?? {}
-                const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
-                const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-                const label = meta?.label || id
-                const cols = config.cols ?? DEFAULT_CONFIGS[id]?.cols ?? 1
-                const minHeight = config.height ?? defaults.height
-                return (
-                  <FreeformWidget
-                    key={id}
-                    id={id}
-                    label={label}
-                    cols={cols}
-                    minHeight={minHeight}
-                    onResize={(next) => {
-                      setWidgetSize(id, next.cols, 1)
-                      setWidgetPx(id, { height: next.minHeight })
-                    }}
-                    onRemove={() => removeWidgetWithUndo(id)}
-                  >
-                    {renderWidget(id)}
-                  </FreeformWidget>
-                )
-              })}
+            <div ref={containerRef} data-tour="freeform-area" className="relative w-full">
+              {containerWidth > 0 && (
+                <MasonryLayout
+                  widgets={visibleWidgets.map(id => {
+                    const config = widgetConfigs[id] ?? {}
+                    const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
+                    const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+                    const label = meta?.label || id
+                    const w = config.width ?? defaults.width
+                    const h = config.height ?? defaults.height
+                    return {
+                      id,
+                      width: Math.max(MIN_WIDGET_PX_W, Math.min(MAX_WIDGET_PX_W, w)),
+                      height: Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, h)),
+                      children: (
+                        <DashboardWidget
+                          id={id}
+                          label={label}
+                          mode="freeform"
+                          cols={1}
+                          width={w}
+                          height={h}
+                          onResizeFreeform={(size) => setWidgetPx(id, size)}
+                          onRemove={() => removeWidgetWithUndo(id)}
+                        >
+                          {renderWidget(id)}
+                        </DashboardWidget>
+                      ),
+                    }
+                  })}
+                  containerWidth={containerWidth}
+                  gap={12}
+                />
+              )}
             </div>
           </SortableContext>
         )}
+        <DragOverlay>
+          {activeId ? (
+            <div className="rounded-lg border-2 border-primary-400 bg-white/90 p-4 shadow-xl dark:bg-slate-800/90">
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                {DASHBOARD_WIDGETS_METADATA.find(w => w.id === activeId)?.label ?? activeId}
+              </p>
+            </div>
+          ) : null}
+        </DragOverlay>
       </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">

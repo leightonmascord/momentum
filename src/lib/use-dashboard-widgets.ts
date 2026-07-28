@@ -5,29 +5,29 @@ export type LayoutMode = 'grid' | 'freeform'
 export interface WidgetConfig {
   id: string
   label: string
+  /** Grid-mode width in columns. */
   cols: number
+  /** Grid-mode height in rows (kept for backwards compatibility even though current grid uses implicit content height). */
   rows: number
-  order: number
-  /** Freeform-mode absolute position in pixels, relative to the canvas. */
-  x?: number
-  y?: number
   /** Freeform-mode pixel size. */
   width?: number
   height?: number
+  /** Ordering priority. */
+  order: number
+  x?: number
+  y?: number
 }
 
 export const MIN_WIDGET_COLS = 1
 export const MAX_WIDGET_COLS = 3
 export const MIN_WIDGET_ROWS = 1
 export const MAX_WIDGET_ROWS = 3
-
-/** Freeform-mode pixel bounds. Small enough that the widget stays usable, large
- *  enough to fit its contents on a phone-width screen. */
 export const MIN_WIDGET_PX_W = 220
 export const MIN_WIDGET_PX_H = 160
 export const MAX_WIDGET_PX_W = 1200
 export const MAX_WIDGET_PX_H = 1600
-
+export const MAX_WIDGET_PX_WIDE = 4000
+export const MAX_WIDGET_PX_TALL = 4000
 export const LAYOUT_STORAGE_KEY = 'momentum-dashboard-layout'
 
 export const DASHBOARD_WIDGETS_METADATA: { id: string; label: string }[] = [
