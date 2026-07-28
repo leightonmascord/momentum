@@ -9,7 +9,7 @@ import { Card } from '../../components/ui/Card'
 import { Modal } from '../../components/ui/Modal'
 import { ColorPicker } from '../../components/ui/ColorPicker'
 import { v4 as uuid } from 'uuid'
-import type { Activity, ActivityLog, DayOfWeek } from '../../domain/types'
+import type { Activity, ActivityLog, DayOfWeek, Session } from '../../domain/types'
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DEFAULT_COLOR = '#6366f1'
@@ -206,16 +206,36 @@ export default function ActivitiesPage() {
         log.actualMinutes = activity.duration || activity.dayMinutes[todayDow as DayOfWeek] || 30
       }
       await db.activityLogs.add(log)
+      let sessionToUndo: Session | null = null
+      if (status === 'completed' && activity.subjectId) {
+        const minutes = log.actualMinutes ?? 30
+        const session: Session = {
+          id: uuid(),
+          subjectId: activity.subjectId,
+          startAt: new Date(new Date(logDate + 'T12:00:00').getTime() - minutes * 60000).toISOString(),
+          endAt: new Date(new Date(logDate + 'T12:00:00')).toISOString(),
+          durationMinutes: minutes,
+          source: 'quickLog',
+          note: `Activity: ${activity.name}`,
+          createdAt: now,
+          updatedAt: now,
+        }
+        sessionToUndo = session
+        await db.sessions.add(session)
+      }
       await loadData()
       setPendingLog(null)
       push({
         description: `Logged ${status} activity: ${activity.name}`,
         undo: async () => {
           await db.activityLogs.delete(log.id)
+          // Also remove the auto-created session, if any
+          if (sessionToUndo) await db.sessions.delete(sessionToUndo.id)
           await loadData()
         },
         redo: async () => {
           await db.activityLogs.add(log)
+          if (sessionToUndo) await db.sessions.add(sessionToUndo)
           await loadData()
         },
       })

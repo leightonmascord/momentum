@@ -25,9 +25,9 @@ import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
-import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE, MIN_WIDGET_PX_W, MIN_WIDGET_PX_H, MAX_WIDGET_PX_W, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
-import { MasonryLayout } from '../../components/widgets/MasonryLayout'
+import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
+import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -228,28 +228,7 @@ export default function Dashboard() {
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [containerWidth, setContainerWidth] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  // Callback ref so container width is set *synchronously* when the element
-  // mounts (instead of relying on ResizeObserver, which doesn't reliably fire
-  // on initial observation). When the user switches modes, the new container
-  // element calls this ref again with the correct width on first render.
-  const setContainerRef = useCallback((el: HTMLDivElement | null) => {
-    containerRef.current = el
-    if (el) {
-      setContainerWidth(el.getBoundingClientRect().width)
-      const ro = new ResizeObserver(([entry]) => {
-        if (entry) setContainerWidth(entry.contentRect.width)
-      })
-      ro.observe(el)
-      // Store for cleanup
-      if (roRef.current) roRef.current.disconnect()
-      roRef.current = ro
-    }
-  }, [])
-  const roRef = useRef<ResizeObserver | null>(null)
-  useEffect(() => () => { roRef.current?.disconnect() }, [])
-  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
   const [batchSubjectId, setBatchSubjectId] = useState('')
@@ -258,6 +237,8 @@ export default function Dashboard() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
+    // Freeform mode uses native pointer drag; handleDragEnd is grid-only.
+    if (layoutMode === 'freeform') return
     if (over && active.id !== over.id) {
       const fromIndex = visibleWidgets.indexOf(active.id as string)
       const toIndex = visibleWidgets.indexOf(over.id as string)
@@ -1400,7 +1381,7 @@ export default function Dashboard() {
       >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={setContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
@@ -1424,43 +1405,41 @@ export default function Dashboard() {
             </div>
           </SortableContext>
         ) : (
-          <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={setContainerRef} data-tour="freeform-area" className="relative w-full">
-              {containerWidth > 0 && (
-                <MasonryLayout
-                  widgets={visibleWidgets.map(id => {
-                    const config = widgetConfigs[id] ?? {}
-                    const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
-                    const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-                    const label = meta?.label || id
-                    const w = config.width ?? defaults.width
-                    const h = config.height ?? defaults.height
-                    return {
-                      id,
-                      width: Math.max(MIN_WIDGET_PX_W, Math.min(MAX_WIDGET_PX_W, w)),
-                      height: Math.max(MIN_WIDGET_PX_H, Math.min(MAX_WIDGET_PX_H, h)),
-                      children: (
-                        <DashboardWidget
-                          id={id}
-                          label={label}
-                          mode="freeform"
-                          cols={1}
-                          width={w}
-                          height={h}
-                          onResizeFreeform={(size) => setWidgetPx(id, size)}
-                          onRemove={() => removeWidgetWithUndo(id)}
-                        >
-                          {renderWidget(id)}
-                        </DashboardWidget>
-                      ),
-                    }
-                  })}
-                  containerWidth={containerWidth}
-                  gap={12}
-                />
-              )}
-            </div>
-          </SortableContext>
+          <div ref={containerRef} data-tour="freeform-area" className="relative w-full min-h-[600px] bg-slate-50 dark:bg-slate-900 rounded-lg border border-dashed border-slate-300 dark:border-slate-700">
+            {visibleWidgets.map(id => {
+              const config = widgetConfigs[id] ?? {}
+              const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
+              const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+              const label = meta?.label || id
+              const w = config.width ?? defaults.width
+              const h = config.height ?? defaults.height
+              const x = config.x ?? 0
+              const y = config.y ?? 0
+              // Track live drag offset (from drag start) so updates don't depend
+              // on committed x/y. Committed position is updated on pointer-up.
+              return (
+                <div
+                  key={id}
+                  className="absolute"
+                  style={{ left: x, top: y, width: w, height: h }}
+                >
+                  <FreeformWidget
+                    id={id}
+                    label={label}
+                    width={w}
+                    height={h}
+                    initialX={x}
+                    initialY={y}
+                    onResize={(size) => setWidgetPx(id, size)}
+                    onCommit={(pos) => setWidgetPx(id, pos)}
+                    onRemove={() => removeWidgetWithUndo(id)}
+                  >
+                    {renderWidget(id)}
+                  </FreeformWidget>
+                </div>
+              )
+            })}
+          </div>
         )}
         <DragOverlay dropAnimation={null}>
           {activeId ? (

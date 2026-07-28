@@ -17,6 +17,8 @@ interface DashboardWidgetProps {
   height?: number
   onResizeGrid?: (cols: number) => void
   onResizeFreeform?: (size: { width: number; height: number }) => void
+  /** Called repeatedly while dragging in freeform mode with the delta from drag start. */
+  onDragFreeform?: (delta: { x: number; y: number }) => void
   onRemove?: () => void
   children: ReactNode
   className?: string
@@ -26,15 +28,14 @@ interface DashboardWidgetProps {
  * Unified dashboard widget wrapper.
  *
  * - Grid mode: container with column-span, side resize button cycles cols.
- * - Freeform mode: absolute positioning, drag corner handle resizes pixels.
- *
- * Drag-and-drop is delegated to the parent (DndContext + SortableContext)
- * via `useSortable`. The wrapper applies the transform but suppresses the
- * default ghost so the parent can use a DragOverlay for a clean preview.
+ *   Uses @dnd-kit's `useSortable` for in-grid reordering via the parent DndContext.
+ * - Freeform mode: absolute positioning, native pointer drag on the header (not
+ *   dnd-kit) so the widget follows the cursor literally. Drag and resize handles
+ *   are independent pointer-driven handlers.
  *
  * Uses a named Tailwind group (`group/widget`) so it does not collide with
- * any inner `group` utility (e.g. heatmap tooltips inside the study-streak
- * widget), which would cause all child tooltips to show on widget hover.
+ * any inner `group` utility (e.g. heatmap day tooltips inside study-streak),
+ * which would otherwise activate every tooltip on widget hover.
  */
 export function DashboardWidget({
   id,
@@ -45,19 +46,48 @@ export function DashboardWidget({
   height,
   onResizeGrid,
   onResizeFreeform,
+  onDragFreeform,
   onRemove,
   children,
   className,
 }: DashboardWidgetProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const isFreeformDragEnabled = mode === 'freeform' && !!onDragFreeform
+  const sortableDisabled = isFreeformDragEnabled
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: sortableDisabled,
+  })
 
+  // ── Freeform header drag (native, no collision-detection snapping) ──
+  const dragRef = useRef<{ startX: number; startY: number } | null>(null)
+  const onFreeformHeaderPointerDown = isFreeformDragEnabled
+    ? (e: React.PointerEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        dragRef.current = { startX: e.clientX, startY: e.clientY }
+        const onMove = (ev: PointerEvent) => {
+          if (!dragRef.current) return
+          const dx = ev.clientX - dragRef.current.startX
+          const dy = ev.clientY - dragRef.current.startY
+          onDragFreeform?.({ x: dx, y: dy })
+        }
+        const onUp = () => {
+          dragRef.current = null
+          window.removeEventListener('pointermove', onMove)
+          window.removeEventListener('pointerup', onUp)
+        }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+      }
+    : undefined
+
+  // ── Freeform resize handle ──
   const resizeRef = useRef<{
     startX: number
     startY: number
     startW: number
     startH: number
   } | null>(null)
-
   const onFreeformResizePointerDown = (e: React.PointerEvent) => {
     if (!onResizeFreeform || width === undefined || height === undefined) return
     e.preventDefault()
@@ -81,16 +111,20 @@ export function DashboardWidget({
     window.addEventListener('pointerup', onUp)
   }
 
-  const style: React.CSSProperties = {
+  const sortableStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.3 : 1,
   }
+  // In freeform mode, position/size are owned by the absolute wrapper parent.
+  // The widget itself fills it (h-full w-full) — don't apply dnd-kit transform.
+  const style: React.CSSProperties =
+    mode === 'freeform' ? {} : sortableStyle
 
   return (
     <div
       ref={setNodeRef}
-      style={mode === 'freeform' ? { ...style, width, height } : style}
+      style={style}
       className={cn(
         'group/widget relative h-full w-full overflow-hidden rounded-lg border bg-white shadow-sm dark:bg-slate-800',
         'border-slate-200 dark:border-slate-700',
@@ -100,7 +134,8 @@ export function DashboardWidget({
     >
       <div
         {...attributes}
-        {...listeners}
+        {...(isFreeformDragEnabled ? {} : listeners)}
+        onPointerDown={onFreeformHeaderPointerDown}
         className="flex cursor-grab items-center justify-between border-b border-slate-200 px-3 py-2 active:cursor-grabbing dark:border-slate-700"
       >
         <div className="flex items-center gap-2">
