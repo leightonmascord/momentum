@@ -971,7 +971,7 @@ export function PomodoroTimer() {
 
 
   return (
-    <Card>
+    <Card className="min-h-[300px]">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>⏱️ Study Timer</CardTitle>

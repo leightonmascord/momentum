@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
 import { SubjectBreakdown } from '../../components/widgets/SubjectBreakdown'
@@ -229,6 +229,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
   const [batchSubjectId, setBatchSubjectId] = useState('')
@@ -724,6 +725,7 @@ export default function Dashboard() {
               <SubjectBreakdown
                 sessions={academicSessions}
                 subjects={data.subjects}
+                categories={data.categories}
                 todayStr={todayStr}
                 liveTimerSeconds={liveTimerSeconds}
                 liveTimerSubjectId={liveTimerSubjectId}

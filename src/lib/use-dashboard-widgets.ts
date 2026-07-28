@@ -139,8 +139,8 @@ export function useDashboardWidgets() {
       const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
       const next = {
         ...cur,
-        x: clampPx(partial.x ?? cur.x ?? 0,MIN_WIDGET_PX_W, 4000),
-        y: clampPx(partial.y ?? cur.y ?? 0, MIN_WIDGET_PX_H, 4000),
+        x: partial.x != null ? Math.max(0, Math.min(4000, partial.x)) : cur.x ?? 0,
+        y: partial.y != null ? Math.max(0, Math.min(4000, partial.y)) : cur.y ?? 0,
         width: clampPx(partial.width ?? cur.width ?? defaults.width, MIN_WIDGET_PX_W, MAX_WIDGET_PX_W),
         height: clampPx(partial.height ?? cur.height ?? defaults.height, MIN_WIDGET_PX_H, MAX_WIDGET_PX_H),
       }

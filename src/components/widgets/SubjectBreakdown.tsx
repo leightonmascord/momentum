@@ -2,12 +2,13 @@
 // Used in the Dashboard "Today" widget.
 
 import { useMemo } from 'react'
-import type { Session, Subject } from '../../domain/types'
-import { sessionLocalDate, getTopLevelSubject } from '../../lib/utils'
+import type { Session, Subject, Category } from '../../domain/types'
+import { sessionLocalDate, getTopLevelSubject, getSessionScope } from '../../lib/utils'
 
 interface SubjectBreakdownProps {
   sessions: Session[]
   subjects: Subject[]
+  categories: Category[]
   todayStr: string
   liveTimerSeconds?: number
   liveTimerSubjectId?: string | null
@@ -16,6 +17,7 @@ interface SubjectBreakdownProps {
 export function SubjectBreakdown({
   sessions,
   subjects,
+  categories,
   todayStr,
   liveTimerSeconds = 0,
   liveTimerSubjectId = null,
@@ -26,7 +28,6 @@ export function SubjectBreakdown({
   )
 
   const breakdown = useMemo(() => {
-    // Group committed sessions
     const minutesBySubject = new Map<string, number>()
     for (const s of sessions) {
       if (s.deletedAt) continue
@@ -35,11 +36,19 @@ export function SubjectBreakdown({
       if (!topLevel) continue
       minutesBySubject.set(topLevel.id, (minutesBySubject.get(topLevel.id) ?? 0) + s.durationMinutes)
     }
+    // Only add live timer minutes if the live timer subject is academic.
     if (liveTimerSeconds > 0 && liveTimerSubjectId) {
-      const liveMinutes = liveTimerSeconds / 60
-      const topLevel = getTopLevelSubject(liveTimerSubjectId, subjects)
-      if (topLevel) {
-        minutesBySubject.set(topLevel.id, (minutesBySubject.get(topLevel.id) ?? 0) + liveMinutes)
+      const scope = getSessionScope(
+        { subjectId: liveTimerSubjectId } as Session,
+        subjects,
+        categories,
+      )
+      if (scope === 'academic') {
+        const liveMinutes = liveTimerSeconds / 60
+        const topLevel = getTopLevelSubject(liveTimerSubjectId, subjects)
+        if (topLevel) {
+          minutesBySubject.set(topLevel.id, (minutesBySubject.get(topLevel.id) ?? 0) + liveMinutes)
+        }
       }
     }
     const total = Array.from(minutesBySubject.values()).reduce((a, b) => a + b, 0)
@@ -53,7 +62,7 @@ export function SubjectBreakdown({
         pct: Math.round((minutes / total) * 100),
       }))
       .sort((a, b) => b.minutes - a.minutes)
-  }, [sessions, subjects, todayStr, liveTimerSeconds, liveTimerSubjectId, subjectMap])
+  }, [sessions, subjects, categories, todayStr, liveTimerSeconds, liveTimerSubjectId, subjectMap])
 
   if (breakdown.length === 0) {
     return <p className="text-xs text-slate-500 dark:text-slate-400">No study time logged today</p>
