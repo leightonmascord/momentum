@@ -231,14 +231,14 @@ export default function Dashboard() {
   const [containerWidth, setContainerWidth] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
-    if (!containerRef.current) return
     const el = containerRef.current
+    if (!el) return
     const ro = new ResizeObserver(([entry]) => {
       if (entry) setContainerWidth(entry.contentRect.width)
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [layoutMode])
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
