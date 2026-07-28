@@ -135,7 +135,17 @@ export function getTotalTodayMinutes(
       total += s.durationSeconds != null ? s.durationSeconds / 60 : s.durationMinutes
     }
   }
-  // Add live timer seconds
-  total += getLiveTimerSeconds() / 60
+  // Add live timer seconds — only if the active timer subject is academic
+  const liveSeconds = getLiveTimerSeconds()
+  const liveSubjectId = getLiveTimerSubjectId()
+  if (liveSubjectId) {
+    const subject = subjects.find(sub => sub.id === liveSubjectId)
+    if (subject) {
+      const category = categories.find(c => c.id === subject.categoryId)
+      if (category?.scope === 'academic') {
+        total += liveSeconds / 60
+      }
+    }
+  }
   return total
 }

@@ -1,8 +1,8 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
 import { SubjectBreakdown } from '../../components/widgets/SubjectBreakdown'
 import { formatTotalToday, getLiveTimerSeconds, getLiveTimerSubjectId, getTotalTodayMinutes, isTimerActive } from '../../lib/timer-utils'
-import { useEffect, useMemo, useRef, useState } from 'react'
 import { addMonths, format, subDays, subMonths } from 'date-fns'
 import { v4 as uuid } from 'uuid'
 import { PomodoroTimer } from '../../components/widgets/PomodoroTimer'
@@ -230,15 +230,25 @@ export default function Dashboard() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => {
-      if (entry) setContainerWidth(entry.contentRect.width)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [layoutMode])
+  // Callback ref so container width is set *synchronously* when the element
+  // mounts (instead of relying on ResizeObserver, which doesn't reliably fire
+  // on initial observation). When the user switches modes, the new container
+  // element calls this ref again with the correct width on first render.
+  const setContainerRef = useCallback((el: HTMLDivElement | null) => {
+    containerRef.current = el
+    if (el) {
+      setContainerWidth(el.getBoundingClientRect().width)
+      const ro = new ResizeObserver(([entry]) => {
+        if (entry) setContainerWidth(entry.contentRect.width)
+      })
+      ro.observe(el)
+      // Store for cleanup
+      if (roRef.current) roRef.current.disconnect()
+      roRef.current = ro
+    }
+  }, [])
+  const roRef = useRef<ResizeObserver | null>(null)
+  useEffect(() => () => { roRef.current?.disconnect() }, [])
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
@@ -1390,7 +1400,7 @@ export default function Dashboard() {
       >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+            <div ref={setContainerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
@@ -1415,7 +1425,7 @@ export default function Dashboard() {
           </SortableContext>
         ) : (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={containerRef} data-tour="freeform-area" className="relative w-full">
+            <div ref={setContainerRef} data-tour="freeform-area" className="relative w-full">
               {containerWidth > 0 && (
                 <MasonryLayout
                   widgets={visibleWidgets.map(id => {
