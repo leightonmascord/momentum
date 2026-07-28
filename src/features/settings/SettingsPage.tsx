@@ -98,7 +98,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 
 function DataRecovery() {
   const { user } = useAuth()
-  const { loadData } = useData()
+  const { data: ctxData, loadData } = useData()
   const [recovering, setRecovering] = useState(false)
   const [checking, setChecking] = useState(false)
   const [diag, setDiag] = useState<{ totalRecords: number; tables: Record<string, { cloud: number; local: number; deleted?: number }> } | null>(null)
@@ -229,15 +229,30 @@ function DataRecovery() {
         </Button>
         <Button variant="secondary" size="sm" onClick={async () => {
           const { db } = await import('../../db/app-db')
-          const subjCount = await db.subjects.count()
-          const catsCount = await db.categories.count()
-          const marksCount = await db.marks.count()
-          const projsCount = await db.projects.count()
-          const sessionsCount = await db.sessions.count()
-          const subjSample = await db.subjects.limit(3).toArray()
-          console.log('[diag] Local DB counts:', { subjects: subjCount, categories: catsCount, marks: marksCount, projects: projsCount, sessions: sessionsCount })
-          console.log('[diag] Subject sample:', subjSample)
-          alert(`Local DB: ${subjCount} subjects, ${catsCount} categories, ${marksCount} marks, ${projsCount} projects, ${sessionsCount} sessions.\nSample subjects: ${subjSample.map((s: any) => s.name).join(', ') || 'none'}`)
+          const [subjects, categories, marks, projects, sessions] = await Promise.all([
+            db.subjects.toArray(),
+            db.categories.toArray(),
+            db.marks.toArray(),
+            db.projects.toArray(),
+            db.sessions.toArray(),
+          ])
+          const count = (arr: Array<{ deletedAt?: string | null }>) => ({ total: arr.length, deleted: arr.filter(r => !!r.deletedAt).length })
+          const counts = {
+            subjects: count(subjects),
+            categories: count(categories),
+            marks: count(marks),
+            projects: count(projects),
+            sessions: count(sessions),
+          }
+          const subjSample = subjects.filter(s => !s.deletedAt).slice(0, 3)
+          console.log('[diag] Local DB counts:', counts)
+          console.log('[diag] Active subject sample:', subjSample)
+          alert(
+            Object.entries(counts)
+              .map(([k, v]) => `${k}: ${v.total - v.deleted} active / ${v.deleted} deleted (total ${v.total})`)
+              .join('\n') +
+              `\nSample active subjects: ${subjSample.map((s) => s.name).join(', ') || 'none'}`
+          )
         }}>
           Check Local DB
         </Button>
@@ -247,6 +262,13 @@ function DataRecovery() {
           alert('Data reloaded from local DB.')
         }}>
           Force Reload UI
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => {
+          alert(
+            `React context:\nsubjects: ${ctxData.subjects.length}\ncategories: ${ctxData.categories.length}\nprojects: ${ctxData.projects.length}\nsessions: ${ctxData.sessions.length}\nmarks: ${ctxData.marks.length}`
+          )
+        }}>
+          Check React Context
         </Button>
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
@@ -267,7 +289,7 @@ function DataRecovery() {
                   <td className="px-2 py-1 font-mono">{key}</td>
                   <td className="px-2 py-1 text-right">{cloud}</td>
                   <td className="px-2 py-1 text-right">{local}</td>
-                  <td className="px-2 py-1 text-right">{deleted ?? '—'}</td>
+                  <td className={cn('px-2 py-1 text-right', (deleted ?? 0) > 0 && 'font-semibold text-amber-600 dark:text-amber-400')}>{deleted ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -276,6 +298,11 @@ function DataRecovery() {
             Total records in cloud: <strong>{diag.totalRecords}</strong>.
             'Deleted' = records with <code>deletedAt</code> set (soft-deleted; hidden from UI).
           </div>
+          {Object.values(diag.tables).some(t => (t.deleted ?? 0) > 0) && (
+            <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+              <strong>Heads up:</strong> You have soft-deleted records hidden from the UI. Click <strong>"Undelete All"</strong> above to restore them.
+            </div>
+          )}
         </div>
       )}
     </Card>

@@ -73,57 +73,56 @@ const emptyData: AppData = {
   studyAreas: [],
   studyReviews: [],
 }
-async function loadAllData(): Promise<AppData> {
-  // Use Dexie indexes where possible to avoid JS-side sorts.
-  const [
-    categories, subjects, projects, sessions, progressLogs,
-    marks, assignments, habits, habitLogs, streakDays,
-    routines, routineLogs, activities, activityLogs,
-    studyAreas, studyReviews,
-  ] = await Promise.all([
-    db.categories.orderBy('name').toArray(),
-    db.subjects.orderBy('name').toArray(),
-    db.projects.orderBy('name').toArray(),
-    db.sessions.orderBy('startAt').reverse().toArray(),
-    db.progressLogs.orderBy('loggedAt').reverse().toArray(),
-    db.marks.orderBy('date').reverse().toArray(),
-    db.assignments.toArray(),
-    db.habits.toArray(),
-    db.habitLogs.toArray(),
-    db.streakDays.toArray(),
-    db.routines.orderBy('name').toArray(),
-    db.routineLogs.orderBy('date').reverse().toArray(),
-    db.activities.orderBy('name').toArray(),
-    db.activityLogs.orderBy('createdAt').reverse().toArray(),
-    db.studyAreas.orderBy('name').toArray(),
-    db.studyReviews.orderBy('reviewedAt').reverse().toArray(),
-  ])
-  console.log('[providers] loadAllData:', {
-    categories: categories.length, subjects: subjects.length, projects: projects.length,
-    sessions: sessions.length, marks: marks.length, assignments: assignments.length,
-    habits: habits.length, habitLogs: habitLogs.length, streakDays: streakDays.length,
-    routines: routines.length, routineLogs: routineLogs.length, activities: activities.length,
-    activityLogs: activityLogs.length, studyAreas: studyAreas.length, studyReviews: studyReviews.length,
-  })
-  return {
-    categories,
-    subjects,
-    sessions: sessions.filter((s) => s.startAt && !isNaN(new Date(s.startAt).getTime())),
-    projects,
-    progressLogs: progressLogs.filter((l) => l.loggedAt && !isNaN(new Date(l.loggedAt).getTime())),
-    marks: marks.filter((m) => m.date && !isNaN(new Date(m.date).getTime())),
-    assignments,
-    habits,
-    habitLogs: habitLogs.filter((l) => l.date),
-    streakDays,
-    routines: routines.map((r) => ({ ...r, dayMinutes: r.dayMinutes ?? {} })),
-    routineLogs,
-    activities,
-    activityLogs,
-    studyAreas,
-    studyReviews: studyReviews.filter((r) => r.reviewedAt && !isNaN(new Date(r.reviewedAt).getTime())),
+async function safeQuery<T>(table: any, order?: { key: string; reverse?: boolean }): Promise<T[]> {
+  try {
+    if (order) {
+      let q = table.orderBy(order.key)
+      if (order.reverse) q = q.reverse()
+      return await q.toArray()
+    }
+    return await table.toArray()
+  } catch (e) {
+    console.warn('[loadAllData] Indexed query failed, falling back to toArray():', e)
+    try {
+      return await table.toArray()
+    } catch (fallbackErr) {
+      console.error('[loadAllData] toArray() also failed:', fallbackErr)
+      return []
+    }
   }
 }
+
+async function loadAllData(): Promise<AppData> {
+  const data: any = {
+    categories: await safeQuery(db.categories, { key: 'name' }),
+    subjects: await safeQuery(db.subjects, { key: 'name' }),
+    projects: await safeQuery(db.projects, { key: 'name' }),
+    sessions: await safeQuery(db.sessions, { key: 'startAt', reverse: true }),
+    progressLogs: await safeQuery(db.progressLogs, { key: 'loggedAt', reverse: true }),
+    marks: await safeQuery(db.marks, { key: 'date', reverse: true }),
+    assignments: await safeQuery(db.assignments),
+    habits: await safeQuery(db.habits),
+    habitLogs: await safeQuery(db.habitLogs),
+    streakDays: await safeQuery(db.streakDays),
+    routines: await safeQuery(db.routines, { key: 'name' }),
+    routineLogs: await safeQuery(db.routineLogs, { key: 'date', reverse: true }),
+    activities: await safeQuery(db.activities, { key: 'name' }),
+    activityLogs: await safeQuery(db.activityLogs, { key: 'createdAt', reverse: true }),
+    studyAreas: await safeQuery(db.studyAreas, { key: 'name' }),
+    studyReviews: await safeQuery(db.studyReviews, { key: 'reviewedAt', reverse: true }),
+  }
+
+  return {
+    ...data,
+    sessions: data.sessions.filter((s: any) => s.startAt && !isNaN(new Date(s.startAt).getTime())),
+    progressLogs: data.progressLogs.filter((l: any) => l.loggedAt && !isNaN(new Date(l.loggedAt).getTime())),
+    marks: data.marks.filter((m: any) => m.date && !isNaN(new Date(m.date).getTime())),
+    habitLogs: data.habitLogs.filter((l: any) => l.date),
+    routines: data.routines.map((r: any) => ({ ...r, dayMinutes: r.dayMinutes ?? {} })),
+    studyReviews: data.studyReviews.filter((r: any) => r.reviewedAt && !isNaN(new Date(r.reviewedAt).getTime())),
+  }
+}
+
 const DataContext = createContext<DataContextValue | null>(null)
 
 export function DataProvider({ children }: { children: ReactNode }) {
@@ -134,18 +133,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const loadTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const pullInProgress = useRef(false)
   const loadData = useCallback(async () => {
-    if (pullInProgress.current) return
+    if (pullInProgress.current) {
+      console.log('[loadData] Skipping — pullAllData in progress')
+      return
+    }
     if (loadTimer.current) clearTimeout(loadTimer.current)
     loadTimer.current = setTimeout(async () => {
       loadTimer.current = null
+      const start = performance.now()
       try {
         const data = await loadAllData()
+        console.log('[loadData] Loaded in', (performance.now() - start).toFixed(1), 'ms, subjects:', data.subjects.length, 'sessions:', data.sessions.length)
         setData(data)
-        // Make sure isLoading is always cleared once data has loaded at least once
         setIsInitialLoad(false)
       } catch (e) {
-        console.error('loadAllData failed:', e)
-        // Even on failure, clear the loading state so the UI is usable
+        console.error('[loadData] Failed:', e)
         setIsInitialLoad(false)
       }
     }, 80)
@@ -157,6 +159,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function init() {
       pullInProgress.current = true
+      const timeout = setTimeout(() => {
+        if (pullInProgress.current) {
+          console.warn('[providers] pullAllData timed out, proceeding with local data')
+          pullInProgress.current = false
+          void loadData()
+        }
+      }, 10_000)
       try {
         const uid = localStorage.getItem('momentum-cloud-uid')
         if (uid) {
@@ -169,6 +178,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
         }
       } finally {
+        clearTimeout(timeout)
         pullInProgress.current = false
       }
       await loadData()
