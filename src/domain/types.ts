@@ -240,6 +240,7 @@ export interface StudyArea {
     enabled: boolean
     dueDate: string      // exam date
   } | null
+  maxReviewInterval?: number | null  // optional cap on review interval in days (e.g. 30 = once a month max)
   createdAt: string
   updatedAt: string
   deletedAt?: string | null

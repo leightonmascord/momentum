@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { loadSettings, saveSettings } from '../../lib/settings-store'
 import { Button } from './Button'
 import { Modal } from './Modal'
+import { VERSION } from '../../lib/version'
 
 /**
  * Dev build preview banner.
@@ -46,7 +47,7 @@ export function DevBanner() {
         <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center rounded bg-amber-700 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
-              Dev Build
+              Dev Build v{VERSION}
             </span>
             <span className="text-sm font-medium text-amber-950">
               Preview Mode — changes are not yet pushed to global

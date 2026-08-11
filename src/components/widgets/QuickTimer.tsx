@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { v4 as uuid } from 'uuid'
 import { db } from '../../db/app-db'
 import type { Session } from '../../domain/types'
 import { Button } from '../ui/Button'
@@ -8,6 +7,8 @@ import { useData } from '../../app/providers'
 import { useSessionSync } from '../../lib/use-session-sync'
 import { updateRoutineLogsForSession, updateStreakDayForSession } from '../../lib/routine-tracker'
 import { isoNow, getSubjectPickerOptions, cn } from '../../lib/utils'
+import { sessionIdFor } from '../../lib/timer-persistence'
+import { sendNotification, requestNotificationPermission } from '../../lib/notification-service'
 
 function fmt(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -26,21 +27,23 @@ interface PersistedTimer {
   focusTag?: Session['focusTag'] | null
   startedAt: number | null // ms epoch when the timer last started/resumed
 }
+function emptyPersisted(): PersistedTimer {
+  return { running: false, seconds: 0, label: '', subjectId: '', focusTag: null, startedAt: null }
+}
 function loadPersisted(): PersistedTimer {
-  if (typeof localStorage === 'undefined') return { running: false, seconds: 0, label: '', subjectId: '', focusTag: null, startedAt: null }
+  if (typeof localStorage === 'undefined') return emptyPersisted()
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { running: false, seconds: 0, label: '', subjectId: '', focusTag: null, startedAt: null }
+    if (!raw) return emptyPersisted()
     const parsed = JSON.parse(raw) as PersistedTimer
-    // If the timer was running, add elapsed wall-clock time since it was started
     if (parsed.running && parsed.startedAt) {
       const elapsed = Math.floor((Date.now() - parsed.startedAt) / 1000)
       parsed.seconds += Math.max(0, elapsed)
-      parsed.startedAt = Date.now() // reset anchor so subsequent ticks measure from now
+      parsed.startedAt = Date.now()
     }
     return parsed
   } catch {
-    return { running: false, seconds: 0, label: '', subjectId: '', focusTag: null, startedAt: null }
+    return emptyPersisted()
   }
 }
 function savePersisted(state: PersistedTimer) {
@@ -51,7 +54,7 @@ function savePersisted(state: PersistedTimer) {
 }
 
 export default function QuickTimer() {
-  const { data, loadData } = useData()
+  const { data, mutate } = useData()
   const { syncSession } = useSessionSync()
   const [running, setRunning] = useState(false)
   const [seconds, setSeconds] = useState(0)
@@ -60,6 +63,8 @@ export default function QuickTimer() {
   const [focusTag, setFocusTag] = useState<Session['focusTag'] | null>(null)
   const intervalRef = useRef<number | null>(null)
   const startedAtRef = useRef<number | null>(null)
+  const stopInFlightRef = useRef(false)
+
   useEffect(() => {
     const persisted = loadPersisted()
     setRunning(persisted.running)
@@ -85,59 +90,71 @@ export default function QuickTimer() {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [running])
+
   // Persist whenever any timer state changes
   useEffect(() => {
     savePersisted({ running, seconds, label, subjectId, focusTag, startedAt: running ? startedAtRef.current : null })
   }, [running, seconds, label, subjectId, focusTag])
-
   function start() {
     startedAtRef.current = Date.now()
     setFocusTag(null)
     setRunning(true)
+    void requestNotificationPermission()
   }
 
   async function stop() {
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = null
-    setRunning(false)
+    if (stopInFlightRef.current) return
+    stopInFlightRef.current = true
+    try {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      intervalRef.current = null
+      setRunning(false)
 
-    // Calculate final total including any elapsed time since last startedAt
-    const now = Date.now()
-    const elapsedSinceStart = startedAtRef.current !== null ? Math.floor((now - startedAtRef.current) / 1000) : 0
-    const total = seconds + elapsedSinceStart
-    if (total < 10) return
-    let subject = data.subjects.find((s) => s.id === subjectId)
-    if (!subject) {
-      subject = data.subjects[0]
+      const now = Date.now()
+      const elapsedSinceStart = startedAtRef.current !== null ? Math.floor((now - startedAtRef.current) / 1000) : 0
+      const total = seconds + elapsedSinceStart
+      if (total < 10) return
+      let subject = data.subjects.find((s) => s.id === subjectId)
+      if (!subject) subject = data.subjects[0]
+      if (!subject) {
+        window.alert('No subjects found. Please create a subject first so your session can be logged.')
+        return
+      }
+      const nowDate = new Date()
+      const start = new Date(nowDate.getTime() - total * 1000)
+      const startAt = start.toISOString()
+      const durationMinutes = Math.max(1, Math.round(total / 60))
+      const durationSeconds = Math.max(10, Math.round(total))
+      const session: Session = {
+        id: sessionIdFor(startAt, subject.id, durationMinutes),
+        subjectId: subject.id,
+        projectId: null,
+        assignmentId: null,
+        startAt,
+        endAt: nowDate.toISOString(),
+        durationMinutes,
+        durationSeconds,
+        note: label || undefined,
+        source: 'timer',
+        ...(focusTag ? { focusTag } : {}),
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      }
+      // Instant UI update FIRST
+      startedAtRef.current = null
+      setSeconds(0)
+      setFocusTag(null)
+      setLabel('')
+      mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] }))
+      // Fire-and-forget DB writes
+      void db.sessions.put(session).catch(err => console.error('Failed to persist session:', err))
+      void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+      void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak day:', err))
+      syncSession(session, subject.name)
+      sendNotification('Momentum', `Session saved: ${subject.name} — ${durationMinutes}m`, 'session-saved')
+    } finally {
+      stopInFlightRef.current = false
     }
-    if (!subject) {
-      window.alert('No subjects found. Please create a subject first so your session can be logged.')
-      return
-    }
-    const nowDate = new Date()
-    const start = new Date(nowDate.getTime() - total * 1000)
-    const session = {
-      id: uuid(),
-      subjectId: subject.id,
-      projectId: null,
-      assignmentId: null,
-      startAt: start.toISOString(),
-      endAt: nowDate.toISOString(),
-      durationMinutes: Math.max(1, Math.round(total / 60)),
-      durationSeconds: Math.max(10, Math.round(total)),
-      note: label || undefined,
-      source: 'timer' as const,
-      ...(focusTag ? { focusTag } : {}),
-      createdAt: isoNow(),
-      updatedAt: isoNow(),
-    }
-    await db.sessions.add(session)
-    syncSession(session, subject.name)
-    await updateRoutineLogsForSession(session)
-    await updateStreakDayForSession(session)
-    setFocusTag(null)
-    setLabel('')
-    await loadData()
   }
 
   function reset() {
@@ -157,7 +174,7 @@ export default function QuickTimer() {
     : seconds
 
   const recentSessions = data.sessions
-    .filter((s) => s.source === 'timer' && s.note)
+    .filter((s) => s.source === 'timer' && s.note && !s.deletedAt)
     .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime())
     .slice(0, 5)
 
@@ -189,7 +206,6 @@ export default function QuickTimer() {
         <div className="text-center text-5xl font-bold tabular-nums text-slate-800 dark:text-slate-100">
           {fmt(displaySeconds)}
         </div>
-        {/* Focus tag selector */}
         <div className="flex gap-1 flex-wrap" role="group" aria-label="Focus tag">
           {(['focused', 'distracted', 'group', 'revision'] as const).map((tag) => (
             <button

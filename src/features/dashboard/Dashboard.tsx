@@ -254,6 +254,16 @@ export default function Dashboard() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [layoutMode])
+  // Re-sync the dashboard from Dexie on mount and whenever the tab regains
+  // focus. This guarantees the daily total reflects every session add/edit/
+  // delete that happened in any tab (or before the page loaded), instead of
+  // trusting a possibly-stale in-memory snapshot.
+  useEffect(() => {
+    void loadData()
+    function onFocus() { void loadData() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadData])
   const dragOriginRef = useRef<{ id: string; snapshot: { x?: number; y?: number; width?: number; height?: number } } | null>(null)
   // Full snapshot of all widget configs at drag start, so undo restores the
  // entire cascade, not just the dragged widget.
@@ -1530,6 +1540,7 @@ export default function Dashboard() {
             aria-selected={layoutMode === 'freeform'}
             onClick={() => setMode('freeform', freeformWidth)}
             className={cn(
+              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
               layoutMode === 'freeform'
                 ? 'bg-primary-600 text-white shadow-sm'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
@@ -1611,7 +1622,7 @@ export default function Dashboard() {
               return (
                 <div
                   key={id}
-                  className="absolute rounded-lg overflow-hidden"
+                  className="absolute"
                   style={{ left: x, top: y, width: w, height: h }}
                 >
                   <FreeformWidget

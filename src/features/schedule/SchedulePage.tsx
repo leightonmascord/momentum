@@ -12,12 +12,39 @@ import { v4 as uuid } from 'uuid'
 import { useSessionSync } from '../../lib/use-session-sync'
 import type { Routine, RoutineLog, Activity, ActivityLog, DayOfWeek, Session, Project } from '../../domain/types'
 import { updateStreakDayForSession, updateRoutineLogsForSession } from '../../lib/routine-tracker'
+import { sessionIdFor } from '../../lib/timer-persistence'
+import { subDays } from 'date-fns'
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const
 const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
 const DEFAULT_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444']
 
+interface CatchUpItem {
+  kind: 'routine' | 'activity'
+  id: string
+  name: string
+  date: string // YYYY-MM-DD of the missed scheduled day
+  color: string
+}
 
+/**
+ * Find the most recent past day (within `windowDays`) on which the item was
+ * scheduled but has no log yet. Returns null if every recent scheduled day
+ * was already logged/skipped. Starts from yesterday so today's not-yet-logged
+ * item is handled by the normal "Mark Done" flow, not the catch-up prompt.
+ */
+function findMissedDate(
+  scheduledDow: (dow: DayOfWeek) => boolean,
+  hasLog: (dateStr: string) => boolean,
+  windowDays = 14
+): string | null {
+  for (let i = 1; i <= windowDays; i++) {
+    const d = subDays(new Date(), i)
+    const ds = format(d, 'yyyy-MM-dd')
+    if (scheduledDow(d.getDay() as DayOfWeek) && !hasLog(ds)) return ds
+  }
+  return null
+}
 
 function timeUntil(timeStr: string): string {
   const [h, m] = timeStr.split(':').map(Number)
@@ -48,10 +75,9 @@ function dayPatternLabel(dayMinutes: Partial<Record<DayOfWeek, number>>): string
 }
 
 export function SchedulePage() {
-  const { data, loadData } = useData()
+  const { data, loadData, mutate } = useData()
   const { push } = useUndo()
   const { syncSession } = useSessionSync()
-
   const [tab, setTab] = useState<'today' | 'plan'>('today')
   const [routineEditing, setRoutineEditing] = useState<Routine | null>(null)
   const [activityEditing, setActivityEditing] = useState<Activity | null>(null)
@@ -61,7 +87,6 @@ export function SchedulePage() {
   const [addRoutineOpen, setAddRoutineOpen] = useState(false)
   const [addActivityOpen, setAddActivityOpen] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-
   const subjects = useMemo(() => data.subjects.filter(s => !s.deletedAt).sort((a, b) => a.name.localeCompare(b.name)), [data.subjects])
   const subjectsMap = useMemo(() => new Map(subjects.map(s => [s.id, s])), [subjects])
   const projects = useMemo(() => data.projects.filter(p => !p.deletedAt).sort((a, b) => a.name.localeCompare(b.name)), [data.projects])
@@ -85,6 +110,117 @@ export function SchedulePage() {
       }),
     [activities, dow]
   )
+  const DISMISSED_KEY = 'momentum-catchup-dismissed'
+  const [dismissed, setDismissed] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '{}') } catch { return {} }
+  })
+
+  const catchUpItems = useMemo(() => {
+    const items: CatchUpItem[] = []
+    for (const r of data.routines.filter(r => !r.deletedAt)) {
+      const missedDate = findMissedDate(
+        dow => (r.dayMinutes[dow] ?? 0) > 0,
+        ds => data.routineLogs.some(l => l.routineId === r.id && l.date === ds)
+      )
+      if (!missedDate) continue
+      const dismissKey = `${r.id}:${missedDate}`
+      if (dismissed[dismissKey]) continue
+      items.push({ kind: 'routine', id: r.id, name: r.name, date: missedDate, color: r.color })
+    }
+
+    for (const a of data.activities.filter(a => !a.deletedAt)) {
+      const missedDate = findMissedDate(
+        dow => (a.dayMinutes[dow] ?? 0) > 0,
+        ds => data.activityLogs.some(l => l.activityId === a.id && l.date === ds)
+      )
+      if (!missedDate) continue
+      const dismissKey = `${a.id}:${missedDate}`
+      if (dismissed[dismissKey]) continue
+      items.push({ kind: 'activity', id: a.id, name: a.name, date: missedDate, color: a.color })
+    }
+
+    return items
+  }, [data.routines, data.routineLogs, data.activities, data.activityLogs, dismissed])
+
+  function dismissCatchUp(id: string, date: string) {
+    const next = { ...dismissed, [`${id}:${date}`]: date }
+    setDismissed(next)
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(next))
+  }
+
+  function confirmCatchUp(item: CatchUpItem) {
+    dismissCatchUp(item.id, item.date)
+
+    if (item.kind === 'routine') {
+      const routine = data.routines.find(r => r.id === item.id)
+      if (!routine) return
+      const mins = routine.dayMinutes[new Date(item.date).getDay() as DayOfWeek] ?? 0
+      if (mins <= 0) return
+
+      const [y, m, d] = item.date.split('-').map(Number)
+      const end = new Date(y, m - 1, d, 12, 0, 0, 0)
+      const start = new Date(end.getTime() - mins * 60_000)
+      const startAt = start.toISOString()
+      const sessionId = sessionIdFor(startAt, routine.subjectId, mins)
+      const session: Session = {
+        id: sessionId,
+        subjectId: routine.subjectId,
+        projectId: routine.projectId ?? null,
+        routineId: routine.id,
+        startAt,
+        endAt: end.toISOString(),
+        durationMinutes: mins,
+        source: 'autoRoutine',
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      }
+      // Instant UI update FIRST
+      mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] }))
+      // Fire-and-forget DB writes
+      void db.sessions.put(session).catch(err => console.error('Failed to save session:', err))
+      const subjectName = subjectsMap.get(routine.subjectId)?.name ?? 'Unknown'
+      syncSession(session, subjectName)
+      void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+      void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
+      push({
+        description: `Logged ${mins}m for ${routine.name} (catch-up for ${item.date})`,
+        undo: async () => {
+          await db.sessions.delete(sessionId)
+          await loadData()
+        },
+        redo: async () => {
+          await db.sessions.put(session)
+          await loadData()
+        },
+      })
+    } else {
+      const activity = data.activities.find(a => a.id === item.id)
+      if (!activity) return
+      const log: ActivityLog = {
+        id: uuid(),
+        activityId: activity.id,
+        date: item.date,
+        status: 'completed',
+        actualMinutes: activity.dayMinutes[new Date(item.date).getDay() as DayOfWeek] ?? activity.duration ?? 0,
+        createdAt: isoNow(),
+      }
+      // Instant UI update FIRST
+      mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, log] }))
+      // Fire-and-forget DB write
+      void db.activityLogs.add(log).catch(err => console.error('Failed to save activity log:', err))
+      push({
+        description: `Marked ${activity.name} attended (catch-up for ${item.date})`,
+        undo: async () => {
+          await db.activityLogs.delete(log.id)
+          await loadData()
+        },
+        redo: async () => {
+          await db.activityLogs.add(log)
+          await loadData()
+        },
+      })
+    }
+  }
 
   function getRoutineLogForToday(routineId: string) {
     return data.routineLogs.find(l => l.routineId === routineId && l.date === todayStr)
@@ -93,12 +229,11 @@ export function SchedulePage() {
   function getActivityLogForToday(activityId: string) {
     return data.activityLogs.find(l => l.activityId === activityId && l.date === todayStr)
   }
-
-  async function buildSession(routine: Routine, mins: number): Promise<Session> {
+  function buildSession(routine: Routine, mins: number): Session {
     const now = new Date()
     const startAt = new Date(now.getTime() - mins * 60 * 1000).toISOString()
     return {
-      id: uuid(),
+      id: sessionIdFor(startAt, routine.subjectId, mins),
       subjectId: routine.subjectId,
       projectId: routine.projectId ?? null,
       routineId: routine.id,
@@ -111,19 +246,18 @@ export function SchedulePage() {
     }
   }
 
-  async function persistSession(session: Session) {
-    await db.sessions.add(session)
+  function persistSession(session: Session) {
+    void db.sessions.put(session).catch(err => console.error('Failed to persist session:', err))
     const subjectName = subjectsMap.get(session.subjectId)?.name ?? 'Unknown'
     syncSession(session, subjectName)
-    await updateRoutineLogsForSession(session)
-    await updateStreakDayForSession(session)
+    void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+    void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak day:', err))
   }
 
-  async function markDone(routine: Routine) {
+  function markDone(routine: Routine) {
     const mins = routine.dayMinutes[dow] ?? 0
     if (mins <= 0) return
-    const session = await buildSession(routine, mins)
-    await persistSession(session)
+    const session = buildSession(routine, mins)
     const existingLog = getRoutineLogForToday(routine.id)
     const logId = existingLog?.id ?? uuid()
     const log: RoutineLog = {
@@ -134,8 +268,17 @@ export function SchedulePage() {
       completed: true,
       createdAt: existingLog?.createdAt ?? isoNow(),
     }
-    await db.routineLogs.put(log)
-    await loadData()
+    // Instant UI update FIRST
+    mutate(prev => ({
+      ...prev,
+      sessions: [...prev.sessions, session],
+      routineLogs: existingLog
+        ? prev.routineLogs.map(l => l.id === logId ? log : l)
+        : [...prev.routineLogs, log],
+    }))
+    // Fire-and-forget DB writes
+    persistSession(session)
+    void db.routineLogs.put(log).catch(err => console.error('Failed to save routine log:', err))
     push({
       description: `Logged ${mins}m for ${routine.name}`,
       undo: async () => {
@@ -144,17 +287,16 @@ export function SchedulePage() {
         await loadData()
       },
       redo: async () => {
-        await db.sessions.add(session)
+        await db.sessions.put(session)
         await db.routineLogs.put(log)
         await loadData()
       },
     })
   }
 
-  async function logCustom(routine: Routine, mins: number) {
+  function logCustom(routine: Routine, mins: number) {
     if (mins <= 0) return
-    const session = await buildSession(routine, mins)
-    await persistSession(session)
+    const session = buildSession(routine, mins)
     const existingLog = getRoutineLogForToday(routine.id)
     const logId = existingLog?.id ?? uuid()
     const log: RoutineLog = {
@@ -165,8 +307,17 @@ export function SchedulePage() {
       completed: false,
       createdAt: existingLog?.createdAt ?? isoNow(),
     }
-    await db.routineLogs.put(log)
-    await loadData()
+    // Instant UI update FIRST
+    mutate(prev => ({
+      ...prev,
+      sessions: [...prev.sessions, session],
+      routineLogs: existingLog
+        ? prev.routineLogs.map(l => l.id === logId ? log : l)
+        : [...prev.routineLogs, log],
+    }))
+    // Fire-and-forget DB writes
+    persistSession(session)
+    void db.routineLogs.put(log).catch(err => console.error('Failed to save routine log:', err))
     push({
       description: `Logged ${mins}m for ${routine.name}`,
       undo: async () => {
@@ -176,14 +327,14 @@ export function SchedulePage() {
         await loadData()
       },
       redo: async () => {
-        await db.sessions.add(session)
+        await db.sessions.put(session)
         await db.routineLogs.put(log)
         await loadData()
       },
     })
   }
 
-  async function skipRoutine(routine: Routine) {
+  function skipRoutine(routine: Routine) {
     const existingLog = getRoutineLogForToday(routine.id)
     if (existingLog) return
     const log: RoutineLog = {
@@ -194,8 +345,10 @@ export function SchedulePage() {
       completed: false,
       createdAt: isoNow(),
     }
-    await db.routineLogs.add(log)
-    await loadData()
+    // Instant UI update FIRST
+    mutate(prev => ({ ...prev, routineLogs: [...prev.routineLogs, log] }))
+    // Fire-and-forget DB write
+    void db.routineLogs.add(log).catch(err => console.error('Failed to save routine log:', err))
     push({
       description: `Skipped ${routine.name}`,
       undo: async () => { await db.routineLogs.delete(log.id); await loadData() },
@@ -203,7 +356,7 @@ export function SchedulePage() {
     })
   }
 
-  async function skipActivity(activity: Activity) {
+  function skipActivity(activity: Activity) {
     const existingLog = getActivityLogForToday(activity.id)
     if (existingLog) return
     const log: ActivityLog = {
@@ -213,8 +366,10 @@ export function SchedulePage() {
       status: 'skipped',
       createdAt: isoNow(),
     }
-    await db.activityLogs.add(log)
-    await loadData()
+    // Instant UI update FIRST
+    mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, log] }))
+    // Fire-and-forget DB write
+    void db.activityLogs.add(log).catch(err => console.error('Failed to save activity log:', err))
     push({
       description: `Skipped ${activity.name}`,
       undo: async () => { await db.activityLogs.delete(log.id); await loadData() },
@@ -222,7 +377,7 @@ export function SchedulePage() {
     })
   }
 
-  async function attendActivity(activity: Activity) {
+  function attendActivity(activity: Activity) {
     const existingLog = getActivityLogForToday(activity.id)
     if (existingLog) return
     const mins = activity.dayMinutes[dow] ?? activity.duration ?? 0
@@ -234,24 +389,34 @@ export function SchedulePage() {
       actualMinutes: mins,
       createdAt: isoNow(),
     }
-    await db.activityLogs.add(log)
     let session: Session | null = null
     if (activity.createsSession && activity.subjectId && mins > 0) {
+      const startAt = new Date(Date.now() - mins * 60 * 1000).toISOString()
       session = {
-        id: uuid(),
+        id: sessionIdFor(startAt, activity.subjectId, mins),
         subjectId: activity.subjectId,
-        startAt: new Date(Date.now() - mins * 60 * 1000).toISOString(),
+        startAt,
         endAt: new Date().toISOString(),
         durationMinutes: mins,
         source: 'autoRoutine',
         createdAt: isoNow(),
         updatedAt: isoNow(),
       }
-      await db.sessions.add(session)
-      const subjectName = subjectsMap.get(activity.subjectId)?.name ?? 'Unknown'
-      syncSession(session, subjectName)
     }
-    await loadData()
+    // Instant UI update FIRST
+    mutate(prev => ({
+      ...prev,
+      activityLogs: [...prev.activityLogs, log],
+      ...(session ? { sessions: [...prev.sessions, session] } : {}),
+    }))
+    // Fire-and-forget DB writes
+    void db.activityLogs.add(log).catch(err => console.error('Failed to save activity log:', err))
+    if (session) {
+      void db.sessions.put(session).catch(err => console.error('Failed to save session:', err))
+      const subjectName = subjectsMap.get(activity.subjectId!)?.name ?? 'Unknown'
+      syncSession(session, subjectName)
+      void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
+    }
     push({
       description: `Attended ${activity.name}`,
       undo: async () => {
@@ -261,7 +426,7 @@ export function SchedulePage() {
       },
       redo: async () => {
         await db.activityLogs.add(log)
-        if (session) await db.sessions.add(session)
+        if (session) await db.sessions.put(session)
         await loadData()
       },
     })
@@ -330,6 +495,42 @@ export function SchedulePage() {
               }
             />
           )}
+
+          {catchUpItems.map(item => (
+            <Card key={`${item.id}:${item.date}`} className="border-l-4 border-l-amber-500">
+              <div className="flex flex-wrap items-center gap-3">
+                <span
+                  className="inline-block h-3 w-3 shrink-0 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                    Did you complete <span className="font-semibold">{item.name}</span> on{' '}
+                    {format(new Date(item.date), 'EEE, d MMM')}?
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => confirmCatchUp(item)}
+                  >
+                    Yes
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => dismissCatchUp(item.id, item.date)}
+                  >
+                    No
+                  </Button>
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                If you tap <em>No</em>, we'll ask again next time this day comes around.
+              </p>
+            </Card>
+          ))}
 
           {todaysActivities.map(activity => (
             <ActivityCard

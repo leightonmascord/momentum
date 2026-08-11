@@ -15,7 +15,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DEFAULT_COLOR = '#6366f1'
 
 export default function ActivitiesPage() {
-  const { data, loadData } = useData()
+  const { data, mutate } = useData()
   const { push } = useUndo()
 
   const [showModal, setShowModal] = useState(false)
@@ -86,33 +86,27 @@ export default function ActivitiesPage() {
     try {
       if (editActivity) {
         const prev = await db.activities.get(editActivity.id)
-        await db.activities.update(editActivity.id, {
+        const updated = {
           name: trimmedName,
           subjectId: subjectId || null,
           color,
           scheduledTime: scheduledTime || undefined,
           notes: notes.trim() || undefined,
           updatedAt: now,
-        })
-        await loadData()
+        }
+        await db.activities.update(editActivity.id, updated)
+        mutate(prevData => ({ ...prevData, activities: prevData.activities.map(a => a.id === editActivity.id ? { ...a, ...updated } : a) }))
         setShowModal(false)
         if (prev) {
           push({
             description: `Updated activity "${trimmedName}"`,
             undo: async () => {
               await db.activities.put(prev)
-              await loadData()
+              mutate(p => ({ ...p, activities: p.activities.map(a => a.id === editActivity.id ? prev : a) }))
             },
             redo: async () => {
-              await db.activities.update(editActivity.id, {
-                name: trimmedName,
-                subjectId: subjectId || null,
-                color,
-                scheduledTime: scheduledTime || undefined,
-                notes: notes.trim() || undefined,
-                updatedAt: isoNow(),
-              })
-              await loadData()
+              await db.activities.update(editActivity.id, updated)
+              mutate(p => ({ ...p, activities: p.activities.map(a => a.id === editActivity.id ? { ...a, ...updated } : a) }))
             },
           })
         }
@@ -129,18 +123,18 @@ export default function ActivitiesPage() {
           updatedAt: now,
         }
         await db.activities.add(newActivity)
-        await loadData()
+        mutate(prev => ({ ...prev, activities: [...prev.activities, newActivity] }))
         setShowModal(false)
         resetForm()
         push({
           description: `Added activity "${trimmedName}"`,
           undo: async () => {
             await db.activities.delete(newActivity.id)
-            await loadData()
+            mutate(prev => ({ ...prev, activities: prev.activities.filter(a => a.id !== newActivity.id) }))
           },
           redo: async () => {
             await db.activities.add(newActivity)
-            await loadData()
+            mutate(prev => ({ ...prev, activities: [...prev.activities, newActivity] }))
           },
         })
       }
@@ -155,17 +149,17 @@ export default function ActivitiesPage() {
       if (!activity) return
       const now = isoNow()
       await db.activities.update(id, { deletedAt: now, updatedAt: now })
-      await loadData()
+      mutate(prev => ({ ...prev, activities: prev.activities.map(a => a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a) }))
       setDeleteConfirm(null)
       push({
         description: `Deleted activity "${activity.name}"`,
         undo: async () => {
           await db.activities.update(id, { deletedAt: null, updatedAt: isoNow() })
-          await loadData()
+          mutate(prev => ({ ...prev, activities: prev.activities.map(a => a.id === id ? { ...a, deletedAt: null, updatedAt: isoNow() } : a) }))
         },
         redo: async () => {
-          await db.activities.update(id, { deletedAt: now, updatedAt: isoNow() })
-          await loadData()
+          await db.activities.update(id, { deletedAt: now, updatedAt: now })
+          mutate(prev => ({ ...prev, activities: prev.activities.map(a => a.id === id ? { ...a, deletedAt: now, updatedAt: now } : a) }))
         },
       })
     } catch (e) {
@@ -223,20 +217,19 @@ export default function ActivitiesPage() {
         sessionToUndo = session
         await db.sessions.add(session)
       }
-      await loadData()
+      mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, log], sessions: sessionToUndo ? [...prev.sessions, sessionToUndo] : prev.sessions }))
       setPendingLog(null)
       push({
         description: `Logged ${status} activity: ${activity.name}`,
         undo: async () => {
           await db.activityLogs.delete(log.id)
-          // Also remove the auto-created session, if any
           if (sessionToUndo) await db.sessions.delete(sessionToUndo.id)
-          await loadData()
+          mutate(prev => ({ ...prev, activityLogs: prev.activityLogs.filter(l => l.id !== log.id), sessions: sessionToUndo ? prev.sessions.filter(s => s.id !== sessionToUndo.id) : prev.sessions }))
         },
         redo: async () => {
           await db.activityLogs.add(log)
           if (sessionToUndo) await db.sessions.add(sessionToUndo)
-          await loadData()
+          mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, log], sessions: sessionToUndo ? [...prev.sessions, sessionToUndo] : prev.sessions }))
         },
       })
     } catch (e) {
@@ -301,18 +294,18 @@ export default function ActivitiesPage() {
           for (const u of updates) {
             await db.activities.update(u.id, { dayMinutes: u.prev.dayMinutes, updatedAt: isoNow() })
           }
-          await loadData()
+          mutate(prev => ({ ...prev, activities: prev.activities.map(a => { const u = updates.find(x => x.id === a.id); return u ? { ...a, dayMinutes: u.prev.dayMinutes, updatedAt: isoNow() } : a }) }))
         },
         redo: async () => {
           for (const u of updates) {
             await db.activities.update(u.id, { dayMinutes: u.dayMinutes, updatedAt: isoNow() })
           }
-          await loadData()
+          mutate(prev => ({ ...prev, activities: prev.activities.map(a => { const u = updates.find(x => x.id === a.id); return u ? { ...a, dayMinutes: u.dayMinutes, updatedAt: isoNow() } : a }) }))
         },
       })
       setIsEditingGrid(false)
       setGridDrafts({})
-      await loadData()
+      mutate(prev => ({ ...prev, activities: prev.activities.map(a => { const u = updates.find(x => x.id === a.id); return u ? { ...a, dayMinutes: u.dayMinutes, updatedAt: isoNow() } : a }) }))
     } catch (e) {
       console.error('Failed to save grid', e)
     }

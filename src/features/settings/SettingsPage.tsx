@@ -12,7 +12,7 @@ import { pushSettings } from '../../lib/settings-sync'
 import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
 import { requestNotificationPermission } from '../../lib/notification-service'
-
+import { VERSION } from '../../lib/version'
 const STORAGE_KEY = 'momentum-settings'
 
 export type Settings = {
@@ -791,6 +791,37 @@ export default function SettingsPage() {
                 Reset All Settings
               </Button>
             </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>About</CardTitle>
+            </CardHeader>
+            <div className="divide-y divide-slate-100 dark:divide-slate-700">
+              <SettingsField label="Version">
+                <span className="font-mono text-xs text-slate-600 dark:text-slate-300">
+                  v{VERSION} · {(window as Window & { __MOMENTUM_BUILD_ID__?: string }).__MOMENTUM_BUILD_ID__ ?? 'dev'}
+                </span>
+              </SettingsField>
+              <SettingsField label="Check for updates">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    if ('serviceWorker' in navigator) {
+                      const regs = await navigator.serviceWorker.getRegistrations()
+                      for (const r of regs) await r.update()
+                      window.location.reload()
+                    }
+                  }}
+                >
+                  Check now
+                </Button>
+              </SettingsField>
+            </div>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              If changes do not appear after a hard refresh, open DevTools → Application → Service Workers → Unregister, then reload.
+            </p>
           </Card>
 
           <AccountSettings />

@@ -42,9 +42,9 @@ export default function ReviewSessionPage() {
 
     const reviewedAt = isoNow()
     const examMode = currentArea.examMode ?? null
-
+    const maxReviewInterval = currentArea.maxReviewInterval ?? null
     // Compute next FSRS state
-    const nextFsrs = scheduleReview(currentArea.fsrs, rating, reviewedAt, examMode)
+    const nextFsrs = scheduleReview(currentArea.fsrs, rating, reviewedAt, examMode, maxReviewInterval)
 
     // Update the area with new FSRS state
     const updatedArea: StudyArea = {

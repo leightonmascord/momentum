@@ -13,16 +13,70 @@ import { updateRoutineLogsForSession, updateStreakDayForSession } from '../../li
 import { clearTimerState, loadTimerState, saveTimerState, savePendingSession, loadPendingSession, clearPendingSession, sessionIdFor, splitSessionAtMidnight } from '../../lib/timer-persistence'
 import { FocusTagSelector, type FocusTag } from '../ui/FocusTagSelector'
 import type { PersistedTimerState, PendingSession } from '../../lib/timer-persistence'
-import { useAllGroupsPresence } from '../../lib/use-all-groups-presence'
 import { groupService } from '../../lib/group-service'
-import type { Group, GroupPresence } from '../../domain/cloud-types'
 import { pushSettings } from '../../lib/settings-sync'
-
+import { sendNotification, requestNotificationPermission } from '../../lib/notification-service'
+import { useTimerTabLock } from '../../lib/use-timer-tab-lock'
 type Mode = 'pomodoro' | 'simple'
 const LAST_SUBJECT_KEY = 'momentum-last-subject'
 const SAFETY_LIMIT_HOURS = 12
 const SAFETY_LIMIT_SECONDS = SAFETY_LIMIT_HOURS * 3600
 type Phase = 'focus' | 'shortBreak' | 'longBreak'
+
+/** Notes textarea + focus tag selector. Used in both idle and active timer states. */
+function TimerNotesAndTag({
+  notes,
+  onNotesChange,
+  focusTag,
+  onFocusTagChange,
+}: {
+  notes: string
+  onNotesChange: (v: string) => void
+  focusTag: FocusTag | null
+  onFocusTagChange: (tag: FocusTag | null) => void
+}) {
+  return (
+    <div>
+      <label className="label">What are you working on?</label>
+      <textarea
+        placeholder="Optional notes"
+        value={notes}
+        onChange={(e) => onNotesChange(e.target.value)}
+        className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
+        rows={2}
+      />
+      <FocusTagSelector value={focusTag} onChange={onFocusTagChange} />
+    </div>
+  )
+}
+
+/** Discard button with inline confirm/cancel. Used in both idle and active timer states. */
+function DiscardButton({
+  showConfirm,
+  onShowConfirm,
+  onCancel,
+  onConfirm,
+}: {
+  showConfirm: boolean
+  onShowConfirm: () => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  if (showConfirm) {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm dark:border-red-800 dark:bg-red-900/30">
+        <span className="text-red-700 dark:text-red-300">Discard?</span>
+        <Button variant="danger" size="sm" onClick={onConfirm}>Confirm</Button>
+        <Button variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
+      </div>
+    )
+  }
+  return (
+    <Button variant="secondary" onClick={onShowConfirm}>
+      Discard
+    </Button>
+  )
+}
 
 function fmt(seconds: number): string {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
@@ -58,91 +112,9 @@ function getPhaseDuration(phase: Phase, cfg?: { focusMinutes: number; breakMinut
   return c.longBreakMinutes * 60
 }
 
-/** Tabbed view of who's studying in each of the user's groups. */
-function GroupPresenceTabs({
-  groups,
-  presenceByGroup,
-  myPresence,
-}: {
-  groups: Group[]
-  presenceByGroup: Map<string, GroupPresence[]>
-  myPresence?: { subjectName: string; elapsedSeconds: number } | null
-}) {
-  const visibleGroups = groups.filter((g) => (presenceByGroup.get(g.id)?.length ?? 0) > 0)
-  const [activeId, setActiveId] = useState<string>(visibleGroups[0]?.id ?? '')
-  useEffect(() => {
-    if (activeId && visibleGroups.some((g) => g.id === activeId)) return
-    setActiveId(visibleGroups[0]?.id ?? '')
-  }, [visibleGroups, activeId])
-  if (visibleGroups.length === 0 && !myPresence) return null
-  const activeRecords = activeId ? (presenceByGroup.get(activeId) ?? []) : []
-  return (
-    <div className="space-y-2 rounded-md border border-primary-200/60 bg-white/50 p-2 dark:border-primary-800/60 dark:bg-slate-900/30">
-      {myPresence && (
-        <div className="rounded-md border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-800 dark:border-primary-900/60 dark:bg-primary-900/20 dark:text-primary-100">
-          You are studying {myPresence.subjectName} — {Math.floor(myPresence.elapsedSeconds / 60)}m {myPresence.elapsedSeconds % 60}s
-        </div>
-      )}
-      {visibleGroups.length > 0 && (
-        <>
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {visibleGroups.map((g) => {
-              const count = presenceByGroup.get(g.id)?.length ?? 0
-              const isActive = g.id === activeId
-              return (
-                <button
-                  key={g.id}
-                  type="button"
-                  onClick={() => setActiveId(g.id)}
-                  className={cn(
-                    'flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                    isActive
-                      ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-100'
-                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
-                  )}
-                  aria-pressed={isActive}
-                >
-                  <span>{g.name}</span>
-                  <span className={cn('flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums', count > 0 ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400')}>
-                    {count}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            {visibleGroups.find((g) => g.id === activeId)?.name ?? 'All Groups'}
-          </div>
-          {activeRecords.length === 0 ? (
-            <div className="text-xs italic text-slate-400 dark:text-slate-500">
-              No one in this group is studying right now.
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {activeRecords.map((p) => {
-                const mins = Math.floor((p.elapsedSeconds ?? 0) / 60)
-                const secs = (p.elapsedSeconds ?? 0) % 60
-                return (
-                  <div key={p.uid} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
-                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                    <span className="font-medium">{p.displayName || 'Member'}</span>
-                    <span className="text-slate-400">{p.subjectName}</span>
-                    <span className="ml-auto tabular-nums text-slate-500">
-                      {mins}:{String(secs).padStart(2, '0')}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
 
 export function PomodoroTimer() {
-  const { data, loadData } = useData()
+  const { data, loadData, mutate } = useData()
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [showConfig, setShowConfig] = useState(false)
 
@@ -163,9 +135,6 @@ export function PomodoroTimer() {
   const changeSubjectConfirmationTimer = useRef<number | null>(null)
   const [timerFocusTag, setTimerFocusTag] = useState<FocusTag | null>(null)
   const [timerNotes, setTimerNotes] = useState('')
-  const [myGroups, setMyGroups] = useState<Group[]>([])
-  const [uid, setUid] = useState<string | null>(null)
-  const allGroupsPresence = useAllGroupsPresence(uid, uid)
 
   const activeSubjects = data.subjects.filter((s) => !s.deletedAt)
   const topLevelSubjects = activeSubjects.filter(isTopLevelSubject).sort((a, b) => a.name.localeCompare(b.name))
@@ -177,14 +146,6 @@ export function PomodoroTimer() {
   const selectedParentId = selectedParentSubject?.id ?? ''
   const availableProjects = data.projects.filter((p) => p.subjectId === subjectId && !p.deletedAt)
   const availableTasks = data.assignments.filter((a) => a.projectId === projectId && !a.completed && !a.deletedAt)
-
-  useEffect(() => {
-    const stored = localStorage.getItem('momentum-cloud-uid')
-    if (stored) {
-      setUid(stored)
-      groupService.listMyGroups(stored).then(setMyGroups)
-    }
-  }, [])
   // Restore notes from persisted timer state on mount
   useEffect(() => {
     const stored = loadTimerState()
@@ -252,7 +213,6 @@ export function PomodoroTimer() {
     return saved?.cyclesCompleted ?? 0
   })
   const pomIntervalRef = useRef<number | null>(null)
-
   // Refs so the interval callback always sees latest values
   const configRef = useRef(config)
   configRef.current = config
@@ -261,6 +221,10 @@ export function PomodoroTimer() {
   stateRef.current = { pomPhase, subjectId, projectId, taskId, pomCycles }
   const dataRef = useRef(data)
   dataRef.current = data
+  // Tab ownership ref — keeps the latest tab-lock decision available inside
+  // imperative handlers (saveSessionWithMidnightCheck, etc.) without
+  // capturing a stale closure value. Assigned after the tab-lock hook runs.
+  const isOwnerRef = useRef(false)
   useEffect(() => {
     if (subjectId) return
     const last = localStorage.getItem(LAST_SUBJECT_KEY)
@@ -277,40 +241,48 @@ export function PomodoroTimer() {
   // NOT a completed session. Discard it to avoid duplicating the session when
   // the user stops the timer later.
   useEffect(() => {
-    const pending = loadPendingSession()
-    if (!pending) return
-    clearPendingSession()
-    const timerState = loadTimerState()
-    if (timerState?.startedAt) {
-      // Timer was running — pending session is stale; the timer will be saved
-      // when the user stops it.
-      return
-    }
-    const baseSession = {
-      id: pending.id,
-      subjectId: pending.subjectId,
-      projectId: pending.projectId,
-      assignmentId: pending.assignmentId,
-      startAt: pending.startAt,
-      endAt: pending.endAt,
-      durationMinutes: pending.durationMinutes,
-      durationSeconds: pending.durationSeconds ?? pending.durationMinutes * 60,
-      note: pending.note,
-      source: pending.source,
-      createdAt: isoNow(),
-      updatedAt: isoNow(),
-    }
-    // Split at midnight if needed (same as active session save path)
-    const splits = splitSessionAtMidnight(baseSession)
-    for (const s of splits) {
-      void db.sessions.put(s).then(async () => {
+    async function recoverPendingSession() {
+      const pending = loadPendingSession()
+      if (!pending) return
+      clearPendingSession()
+      const timerState = loadTimerState()
+      if (
+        timerState?.startedAt ||
+        (timerState?.mode === 'simple' && (timerState.simplePausedOffset ?? 0) > 0)
+      ) {
+        // Timer is still in progress (running or paused). The accumulated time
+        // will be included when the user resumes/stops later, so recovering the
+        // pending snapshot here would duplicate that study block.
+        return
+      }
+      const baseSession = {
+        id: pending.id,
+        subjectId: pending.subjectId,
+        projectId: pending.projectId,
+        assignmentId: pending.assignmentId,
+        startAt: pending.startAt,
+        endAt: pending.endAt,
+        durationMinutes: pending.durationMinutes,
+        durationSeconds: pending.durationSeconds ?? pending.durationMinutes * 60,
+        note: pending.note,
+        source: pending.source,
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      }
+      const splits = splitSessionAtMidnight(baseSession)
+      for (const s of splits) {
+        const existing = await db.sessions.get(s.id)
+        if (existing && !existing.deletedAt) continue
+        if (existing?.deletedAt) continue
+        await db.sessions.put(s)
         const subjectName = data.subjects.find((sub) => sub.id === s.subjectId)?.name ?? 'Unknown Subject'
         syncSession(s, subjectName)
         await updateRoutineLogsForSession(s)
         await updateStreakDayForSession(s)
-        await loadData()
-      })
+      }
+      await loadData()
     }
+    void recoverPendingSession()
   }, [])
 
   // Simple timer tick — compute elapsed from wall clock + paused offset
@@ -328,6 +300,7 @@ export function PomodoroTimer() {
         simpleSafetyFiredRef.current = true
         const hours = Math.floor(elapsed / 3600)
         setSafetyMessage(`Timer has been running for ${hours}h. Save it to avoid data loss?`)
+        sendNotification('Momentum', `Timer has been running for ${hours}h. Save it to avoid data loss?`, 'pomodoro-safety')
         pauseSimple()
       }
     }
@@ -352,6 +325,7 @@ export function PomodoroTimer() {
         pomSafetyFiredRef.current = true
         const hours = Math.floor(elapsed / 3600)
         setSafetyMessage(`Timer has been running for ${hours}h. Save it to avoid data loss?`)
+        sendNotification('Momentum', `Timer has been running for ${hours}h. Save it to avoid data loss?`, 'pomodoro-safety')
         pausePomodoro()
       }
     }
@@ -365,6 +339,7 @@ export function PomodoroTimer() {
     if (!pomStartedAt) return
     if (pomSeconds > 0) return
     if (configRef.current.soundEnabled) playNotificationSound()
+    sendNotification('Momentum', pomPhase === 'focus' ? 'Focus session complete — time for a break!' : 'Break over — back to focus!', 'pomodoro-phase')
     const st = stateRef.current
     const cfg = configRef.current
     const projects = dataRef.current.projects
@@ -450,6 +425,9 @@ export function PomodoroTimer() {
   // On next mount, the pending session is recovered and committed.
   useEffect(() => {
     function buildPendingSession(): PendingSession | null {
+      // Only the owning tab may write a pending session — a peer tab would
+      // otherwise create a duplicate on close.
+      if (!isOwnerRef.current) return null
       if (simpleStartedAt) {
         const total = simpleSeconds
         const actualSubjId = projectId
@@ -532,6 +510,9 @@ export function PomodoroTimer() {
     document.title = simpleStartedAt !== null ? `${fmt(simpleSeconds)} — Momentum` : `${fmt(pomSeconds)} — Momentum`
     return () => { document.title = 'Momentum' }
   }, [isRunning, simpleSeconds, pomSeconds])
+
+  const { isOwner, isOwnedElsewhere } = useTimerTabLock(isRunning)
+  isOwnerRef.current = isOwner
 
   // Group presence: write our live status to all of our groups when the
   // timer is running, clear it when stopped. Subscribers in other members'
@@ -624,6 +605,7 @@ export function PomodoroTimer() {
     simpleSafetyFiredRef.current = false
     lastSavedCumulativeRef.current = 0
     void null
+    void requestNotificationPermission()
     const now = Date.now()
     setSimpleStartedAt(now)
     const state: PersistedTimerState = {
@@ -687,7 +669,7 @@ export function PomodoroTimer() {
    * Save a session, splitting at local midnight if needed.
    * Handles Dexie write, UI sync, routine log, streak update, and reload.
    */
-  async function saveSessionWithMidnightCheck(session: {
+  function saveSessionWithMidnightCheck(session: {
     id: string
     subjectId: string
     projectId: string | null
@@ -702,16 +684,22 @@ export function PomodoroTimer() {
     createdAt: string
     updatedAt: string
   }) {
+    // Cross-tab safety: only the owning tab may persist sessions. If a peer
+    // tab is already running the same timer, skip the write to avoid
+    // duplicates. Reads the latest owner ref (set via the tab lock).
+    if (!isOwnerRef.current) return
     // Split if crosses midnight
     const splits = splitSessionAtMidnight(session)
+    // Instant UI update FIRST — show the session without waiting for DB
+    mutate(prev => ({ ...prev, sessions: [...prev.sessions, ...splits] }))
+    // Fire-and-forget DB + maintenance writes. Errors are logged but never block the UI.
     for (const s of splits) {
-      await db.sessions.put(s)
       const subjectName = data.subjects.find((sub) => sub.id === s.subjectId)?.name ?? 'Unknown Subject'
-      syncSession(s, subjectName)
-      await updateRoutineLogsForSession(s)
-      await updateStreakDayForSession(s)
+      void db.sessions.put(s).catch(err => console.error('Failed to persist session:', err))
+      void updateRoutineLogsForSession(s).catch(err => console.error('Failed to update routine logs:', err))
+      void updateStreakDayForSession(s).catch(err => console.error('Failed to update streak day:', err))
+      syncSession(s, subjectName) // Fire-and-forget sync
     }
-    await loadData()
   }
 
   async function stopSimple() {
@@ -729,7 +717,7 @@ export function PomodoroTimer() {
       const durationSeconds = Math.max(10, Math.round(delta))
       const durationMinutes = Math.max(1, Math.round(delta / 60))
 
-      await saveSessionWithMidnightCheck({
+      saveSessionWithMidnightCheck({
         id: sessionIdFor(startAt, actualSubjectId, durationMinutes),
         subjectId: actualSubjectId,
         projectId: project?.id ?? null,
@@ -744,10 +732,13 @@ export function PomodoroTimer() {
         createdAt: isoNow(),
         updatedAt: isoNow(),
       })
+      clearPendingSession()
     }
     lastSavedCumulativeRef.current = total
     simpleSafetyFiredRef.current = false
     setSafetyMessage('')
+    setSimplePausedOffset(0)
+    setSimpleSeconds(0)
     setTimerNotes('')
     localStorage.removeItem('momentum-timer-notes')
   }
@@ -772,7 +763,7 @@ export function PomodoroTimer() {
         const startAt = start.toISOString()
         const durationSeconds = Math.max(10, Math.round(delta))
         const durationMinutes = Math.max(1, Math.round(delta / 60))
-        await saveSessionWithMidnightCheck({
+        saveSessionWithMidnightCheck({
           id: sessionIdFor(startAt, actualSubjectId, durationMinutes),
           subjectId: actualSubjectId,
           projectId: project?.id ?? null,
@@ -788,6 +779,7 @@ export function PomodoroTimer() {
           updatedAt: isoNow(),
         })
       }
+      clearPendingSession()
       lastSavedCumulativeRef.current = elapsed
     } else {
       // Save current pomodoro focus session (only if focus phase and has been running)
@@ -803,7 +795,7 @@ export function PomodoroTimer() {
           const start = new Date(startMs)
           const end = new Date()
           const startAt = start.toISOString()
-          await saveSessionWithMidnightCheck({
+          saveSessionWithMidnightCheck({
             id: sessionIdFor(startAt, actualSubjId, partialMinutes),
             subjectId: actualSubjId,
             projectId: project?.id ?? null,
@@ -820,6 +812,7 @@ export function PomodoroTimer() {
           })
         }
       }
+      clearPendingSession()
     }
     // Switch subject and start new session
     setSubjectId(newSubjectId)
@@ -866,6 +859,7 @@ export function PomodoroTimer() {
   function startPomodoro() {
     setSafetyMessage('')
     pomSafetyFiredRef.current = false
+    void requestNotificationPermission()
     const now = Date.now()
     setPomStartedAt(now)
     const state: PersistedTimerState = {
@@ -917,7 +911,7 @@ export function PomodoroTimer() {
         const start = new Date(startMs)
         const end = new Date()
         const startAt = start.toISOString()
-        await saveSessionWithMidnightCheck({
+        saveSessionWithMidnightCheck({
           id: sessionIdFor(startAt, actualSubjId, partialMinutes),
           subjectId: actualSubjId,
           projectId: project?.id ?? null,
@@ -932,6 +926,7 @@ export function PomodoroTimer() {
           createdAt: isoNow(),
           updatedAt: isoNow(),
         })
+          clearPendingSession()
       }
     }
     setPomStartedAt(null)
@@ -971,28 +966,27 @@ export function PomodoroTimer() {
 
 
   return (
-    <Card className="min-h-[300px]">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>⏱️ Study Timer</CardTitle>
-          {mode === 'pomodoro' && settings.pomodoroEnabled && (
-            <button
-              onClick={() => { if (!isTimerActive) setShowConfig(!showConfig) }}
-              disabled={isTimerActive}
-              className={cn(
-                'rounded p-1.5 text-sm transition-colors',
-                isTimerActive
-                  ? 'text-slate-300 cursor-not-allowed dark:text-slate-600'
-                  : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300'
-              )}
-              title={isTimerActive ? 'Stop timer to edit' : 'Configure pomodoro'}
-            >
-              ⚙️
-            </button>
-          )}
-        </div>
-      </CardHeader>
-
+    <Card>
+      {/* Header — only show when timer is idle */}
+      {!isTimerActive && (
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>⏱️ Study Timer</CardTitle>
+            {mode === 'pomodoro' && settings.pomodoroEnabled && (
+              <button
+                onClick={() => { setShowConfig(!showConfig) }}
+                className={cn(
+                  'rounded p-1.5 text-sm transition-colors',
+                  'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300'
+                )}
+                title="Configure pomodoro"
+              >
+                ⚙️
+              </button>
+            )}
+          </div>
+        </CardHeader>
+      )}
       {/* Config panel (gear) */}
       {showConfig && mode === 'pomodoro' && !isTimerActive && (
         <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-800/50">
@@ -1077,34 +1071,35 @@ export function PomodoroTimer() {
           </p>
         </div>
       )}
-
-      {/* Mode toggle */}
-      <div className="mb-3 flex gap-2">
-        <button
-          onClick={() => setMode('simple')}
-          className={cn(
-            'flex-1 rounded px-2 py-1 text-sm font-medium transition-colors',
-            mode === 'simple'
-              ? 'bg-primary-600 text-white'
-              : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-          )}
-        >
-          Simple
-        </button>
-        {settings.pomodoroEnabled && (
+      {/* Mode toggle — only show when idle */}
+      {!isTimerActive && (
+        <div className="mb-3 flex gap-2">
           <button
-            onClick={() => setMode('pomodoro')}
+            onClick={() => setMode('simple')}
             className={cn(
               'flex-1 rounded px-2 py-1 text-sm font-medium transition-colors',
-              mode === 'pomodoro'
+              mode === 'simple'
                 ? 'bg-primary-600 text-white'
                 : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
             )}
           >
-            Pomodoro
+            Simple
           </button>
-        )}
-      </div>
+          {settings.pomodoroEnabled && (
+            <button
+              onClick={() => setMode('pomodoro')}
+              className={cn(
+                'flex-1 rounded px-2 py-1 text-sm font-medium transition-colors',
+                mode === 'pomodoro'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+              )}
+            >
+              Pomodoro
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Phase indicator */}
       {mode === 'pomodoro' && settings.pomodoroEnabled && (
@@ -1138,67 +1133,63 @@ export function PomodoroTimer() {
         </div>
       )}
 
-      {/* Timer display — hidden when YPT simple view is active */}
-      {!(mode === 'simple' && (simpleStartedAt !== null || simplePausedOffset > 0)) && (
-        <div className="text-center text-5xl font-bold tabular-nums text-slate-800 dark:text-slate-100">
-          {fmt(currentSeconds)}
-        </div>
-      )}
+      {/* Timer display — always visible */}
+      <div className="text-center text-5xl font-bold tabular-nums text-slate-800 dark:text-slate-100">
+        {fmt(currentSeconds)}
+      </div>
 
-      {/* Cycle indicator - larger dots with numbers */}
-      {mode === 'pomodoro' && settings.pomodoroEnabled && (
-        <div className="mt-2 flex justify-center gap-2">
-          {Array.from({ length: config.cycles }, (_, i) => {
-            const completedCycles = pomCycles % config.cycles
-            const completed = i < completedCycles
-            return (
-              <div
-                key={i}
-                className={cn(
-                  'flex h-8 w-8 items-center justify-center rounded-full border-2',
-                  completed
-                    ? 'border-primary-600 bg-primary-600 text-white'
-                    : 'border-slate-300 dark:border-slate-600'
-                )}
-              >
-                {completed ? i + 1 : ''}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Recent Sessions */}
-      {mode === 'pomodoro' && settings.pomodoroEnabled && (
-        <div className="mt-4">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recent Sessions</h3>
-          <div className="space-y-2">
-            {data.sessions.filter((s) => s.source === 'pomodoro').slice(0, 3).map((session) => {
-              const subject = data.subjects.find((s) => s.id === session.subjectId)
+      {/* Cycle dots + recent sessions — only when idle in pomodoro mode */}
+      {!isTimerActive && mode === 'pomodoro' && settings.pomodoroEnabled && (
+        <>
+          <div className="mt-2 flex justify-center gap-2">
+            {Array.from({ length: config.cycles }, (_, i) => {
+              const completedCycles = pomCycles % config.cycles
+              const completed = i < completedCycles
               return (
-                <div key={session.id} className="flex items-center gap-2 text-xs">
-                  <div
-                    className={cn(
-                      'h-2 w-2 rounded-full',
-                      subject?.color ?? 'bg-slate-400'
-                    )}
-                  />
-                  <span className="truncate text-slate-700 dark:text-slate-300">{subject?.name ?? 'Unknown'}</span>
-                  <span className="text-slate-500 dark:text-slate-400">{session.durationMinutes}m</span>
-                  <span className="ml-auto text-slate-400">{format(new Date(session.startAt), 'h:mm a')}</span>
+                <div
+                  key={i}
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-full border-2',
+                    completed
+                      ? 'border-primary-600 bg-primary-600 text-white'
+                      : 'border-slate-300 dark:border-slate-600'
+                  )}
+                >
+                  {completed ? i + 1 : ''}
                 </div>
               )
             })}
-            {data.sessions.filter((s) => s.source === 'pomodoro').length === 0 && (
-              <p className="text-xs text-slate-400 dark:text-slate-500">No sessions yet</p>
-            )}
           </div>
-        </div>
+          <div className="mt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Recent Sessions</h3>
+            <div className="space-y-2">
+              {data.sessions.filter((s) => s.source === 'pomodoro').slice(0, 3).map((session) => {
+                const subject = data.subjects.find((s) => s.id === session.subjectId)
+                return (
+                  <div key={session.id} className="flex items-center gap-2 text-xs">
+                    <div
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        subject?.color ?? 'bg-slate-400'
+                      )}
+                    />
+                    <span className="truncate text-slate-700 dark:text-slate-300">{subject?.name ?? 'Unknown'}</span>
+                    <span className="text-slate-500 dark:text-slate-400">{session.durationMinutes}m</span>
+                    <span className="ml-auto text-slate-400">{format(new Date(session.startAt), 'h:mm a')}</span>
+                  </div>
+                )
+              })}
+              {data.sessions.filter((s) => s.source === 'pomodoro').length === 0 && (
+                <p className="text-xs text-slate-400 dark:text-slate-500">No sessions yet</p>
+              )}
+            </div>
+          </div>
+        </>
       )}
 
-      {/* Focus Area selectors — collapse when timer is running */}
+      {/* Subject selectors (idle) / compact info + controls (active) */}
       <div className="mt-3 space-y-2">
-        {(!pomStartedAt && !simpleStartedAt) ? (
+        {!isTimerActive ? (
           <>
             <div>
               <label className="label">Focus Area</label>
@@ -1258,151 +1249,85 @@ export function PomodoroTimer() {
                 </select>
               </div>
             )}
-            <div>
-              <label className="label">What are you working on?</label>
-              <textarea
-                placeholder="Optional notes"
-                value={timerNotes}
-                onChange={(e) => {
-                  setTimerNotes(e.target.value)
-                  const state = loadTimerState()
-                  if (state) saveTimerState({ ...state, notes: e.target.value })
-                }}
-                className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
-                rows={2}
-              />
-              <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
-            </div>
-          </>
-        ) : !(mode === 'simple' && (simpleStartedAt !== null || simplePausedOffset > 0)) ? (
-          <>
-            <div className="text-sm text-slate-600 dark:text-slate-300">
-              Studying <span className="font-semibold">{getSubjectPathLabel(subjectId, data.subjects)}</span>
-              {myGroups.length > 0 && (
-                <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
-                  {myGroups.length} group{myGroups.length === 1 ? '' : 's'}
-                </span>
-              )}
-            </div>
-            <textarea
-              placeholder="What are you working on?"
-              value={timerNotes}
-              onChange={(e) => {
-                setTimerNotes(e.target.value)
+            <TimerNotesAndTag
+              notes={timerNotes}
+              onNotesChange={(v) => {
+                setTimerNotes(v)
                 const state = loadTimerState()
-                if (state) saveTimerState({ ...state, notes: e.target.value })
+                if (state) saveTimerState({ ...state, notes: v })
               }}
-              className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
-              rows={2}
+              focusTag={timerFocusTag}
+              onFocusTagChange={setTimerFocusTag}
             />
-            <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
-          </>
-        ) : null}
-      </div>
-
-      {/* Simple mode: YPT-style study view */}
-      {mode === 'simple' && (simpleStartedAt !== null || simplePausedOffset > 0) ? (
-        <div className="mt-4 space-y-4 rounded-lg border border-primary-200 bg-primary-50/40 p-5 dark:border-primary-800 dark:bg-primary-900/20">
-          <div className="text-center text-base font-medium text-slate-700 dark:text-slate-200">
-            Studying <span className="font-semibold text-slate-900 dark:text-slate-50">{getSubjectPathLabel(subjectId, data.subjects) || 'Unknown'}</span>
-          </div>
-          <textarea
-            placeholder="What are you working on?"
-            value={timerNotes}
-            onChange={(e) => {
-              setTimerNotes(e.target.value)
-              const state = loadTimerState()
-              if (state) saveTimerState({ ...state, notes: e.target.value })
-            }}
-            className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
-            rows={2}
-          />
-          <FocusTagSelector value={timerFocusTag} onChange={(tag) => setTimerFocusTag(tag)} />
-          <div className="text-center text-6xl font-bold tabular-nums text-slate-800 dark:text-slate-100">
-            {fmt(simpleSeconds)}
-          </div>
-          <div className="text-center text-sm text-slate-500 dark:text-slate-400">
-            Total today: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatTotalToday(totalTodayMinutes, isTimerActive && mode === 'simple')}</span>
-          </div>
-          {/* Live group presence — show when timer is running */}
-          {myGroups.length > 0 && (() => {
-            const isTimerRunning = simpleStartedAt !== null || pomStartedAt !== null
-            const subjectName = data.subjects.find((s) => s.id === subjectId)?.name ?? ''
-            const elapsedSeconds = simpleStartedAt
-              ? simplePausedOffset + Math.floor((Date.now() - simpleStartedAt) / 1000)
-              : 0
-            return (
-              <GroupPresenceTabs
-                groups={myGroups}
-                presenceByGroup={allGroupsPresence}
-                myPresence={isTimerRunning ? { subjectName, elapsedSeconds } : null}
-              />
-            )
-          })()}
-          <div className="flex justify-center gap-2">
-            {simpleStartedAt !== null ? (
-              <Button variant="secondary" onClick={pauseSimple}>Pause</Button>
-            ) : (
-              <Button variant="primary" onClick={resumeSimple}>Resume</Button>
-            )}
-            <Button variant="danger" onClick={stopSimple}>Stop & Save</Button>
-            {showDiscardConfirm ? (
-              <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm dark:border-red-800 dark:bg-red-900/30">
-                <span className="text-red-700 dark:text-red-300">Discard this session?</span>
-                <Button variant="danger" size="sm" onClick={discardSession}>Confirm</Button>
-                <Button variant="secondary" size="sm" onClick={() => setShowDiscardConfirm(false)}>Cancel</Button>
-              </div>
-            ) : (
-              <Button
-                variant="secondary"
-                onClick={() => setShowDiscardConfirm(true)}
-              >
-                Discard
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Controls */}
-          <div className="mt-3 flex justify-center gap-2">
-            {mode === 'simple' ? (
-              <Button variant="primary" onClick={startSimple} disabled={!subjectId && !projectId}>
-                Start
-              </Button>
-            ) : (
-              <>
-                {!pomStartedAt ? (
+            <div className="flex justify-center gap-2 mt-3">
+              {isOwnedElsewhere ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">Timer is running in another tab — controls disabled here</p>
+              ) : mode === 'simple' ? (
+                <Button variant="primary" onClick={startSimple} disabled={!subjectId && !projectId}>
+                  Start
+                </Button>
+              ) : (
+                <>
                   <Button variant="primary" onClick={startPomodoro} disabled={!subjectId && !projectId}>
                     Start
                   </Button>
-                ) : (
-                  <Button variant="secondary" onClick={pausePomodoro}>
-                    Pause
-                  </Button>
-                )}
-                <Button variant="secondary" onClick={resetPomodoro}>
-                  Reset
-                </Button>
-                {showDiscardConfirm ? (
-                  <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm dark:border-red-800 dark:bg-red-900/30">
-                    <span className="text-red-700 dark:text-red-300">Discard this session?</span>
-                    <Button variant="danger" size="sm" onClick={discardSession}>Confirm</Button>
-                    <Button variant="secondary" size="sm" onClick={() => setShowDiscardConfirm(false)}>Cancel</Button>
-                  </div>
-                ) : (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setShowDiscardConfirm(true)}
-                  >
-                    Discard
-                  </Button>
-                )}
-              </>
+                  <DiscardButton
+                    showConfirm={showDiscardConfirm}
+                    onShowConfirm={() => setShowDiscardConfirm(true)}
+                    onCancel={() => setShowDiscardConfirm(false)}
+                    onConfirm={discardSession}
+                  />
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-sm text-slate-600 dark:text-slate-300">
+              Studying <span className="font-semibold">{getSubjectPathLabel(subjectId, data.subjects)}</span>
+            </div>
+            <TimerNotesAndTag
+              notes={timerNotes}
+              onNotesChange={(v) => {
+                setTimerNotes(v)
+                const state = loadTimerState()
+                if (state) saveTimerState({ ...state, notes: v })
+              }}
+              focusTag={timerFocusTag}
+              onFocusTagChange={setTimerFocusTag}
+            />
+            {mode === 'simple' && (
+              <div className="text-center text-xs text-slate-500 dark:text-slate-400">
+                Total today: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatTotalToday(totalTodayMinutes, true)}</span>
+              </div>
             )}
-          </div>
-        </>
-      )}
+            <div className="flex justify-center gap-2">
+              {isOwnedElsewhere ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">Timer is running in another tab — controls disabled here</p>
+              ) : (
+                <>
+                  {simpleStartedAt !== null ? (
+                    <Button variant="secondary" onClick={pauseSimple}>Pause</Button>
+                  ) : pomStartedAt !== null ? (
+                    <Button variant="secondary" onClick={pausePomodoro}>Pause</Button>
+                  ) : (
+                    <Button variant="primary" onClick={mode === 'simple' ? resumeSimple : () => {}}>Resume</Button>
+                  )}
+                  <Button variant="danger" onClick={mode === 'simple' ? () => void stopSimple() : () => void resetPomodoro()}>
+                    Stop &amp; Save
+                  </Button>
+                  <DiscardButton
+                    showConfirm={showDiscardConfirm}
+                    onShowConfirm={() => setShowDiscardConfirm(true)}
+                    onCancel={() => setShowDiscardConfirm(false)}
+                    onConfirm={discardSession}
+                  />
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
       {/* Change Subject — only when timer is running */}
       {isTimerActive && (
         <div className="mt-2 flex flex-col items-center gap-1">

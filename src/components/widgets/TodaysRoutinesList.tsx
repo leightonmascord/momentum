@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import type { Routine, RoutineLog, Subject, DayOfWeek } from '../../domain/types'
 import { cn } from '../../lib/utils'
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 
 interface TodaysRoutinesListProps {
   routines: Routine[]
@@ -16,6 +17,8 @@ interface TodaysRoutinesListProps {
   clickable?: boolean
   /** Optional callback when a row is clicked (used for expand) */
   onRowClick?: (routine: Routine) => void
+  /** Optional context-menu actions per routine row (right-click / long-press) */
+  onContextActions?: (routine: Routine) => ContextMenuItem[]
 }
 
 export function TodaysRoutinesList({
@@ -27,6 +30,7 @@ export function TodaysRoutinesList({
   maxItems = 5,
   clickable = false,
   onRowClick,
+  onContextActions,
 }: TodaysRoutinesListProps) {
   const subjectsMap = useMemo(
     () => new Map(subjects.filter(s => !s.deletedAt).map(s => [s.id, s])),
@@ -112,13 +116,19 @@ export function TodaysRoutinesList({
           </div>
         )
 
-        return clickable ? (
+        const content = clickable ? (
           <Link key={routine.id} to="/routines" className="block">
             {Row}
           </Link>
         ) : (
           Row
         )
+
+        const actions = onContextActions?.(routine)
+        if (actions && actions.length > 0) {
+          return <ContextMenu key={routine.id} items={actions}>{content}</ContextMenu>
+        }
+        return content
       })}
       {hasMore && (
         <Link

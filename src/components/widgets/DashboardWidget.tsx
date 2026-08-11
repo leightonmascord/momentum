@@ -135,8 +135,8 @@ export function DashboardWidget({
       <div
         {...attributes}
         {...(isFreeformDragEnabled ? {} : listeners)}
-        onPointerDown={onFreeformHeaderPointerDown}
-        className="flex cursor-grab items-center justify-between border-b border-slate-200 px-3 py-2 active:cursor-grabbing dark:border-slate-700"
+        {...(isFreeformDragEnabled ? { onPointerDown: onFreeformHeaderPointerDown } : {})}
+        className="flex cursor-grab items-center justify-between border-b border-slate-100 px-2 py-1 active:cursor-grabbing dark:border-slate-700"
       >
         <div className="flex items-center gap-2">
           <svg

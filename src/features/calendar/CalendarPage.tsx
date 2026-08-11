@@ -64,7 +64,7 @@ interface MarkForm {
 const emptyMarkForm = (): MarkForm => ({ score: '', total: '100' })
 
 export default function CalendarPage() {
-  const { data, isLoading, loadData } = useData()
+  const { data, isLoading, loadData, mutate } = useData()
   const { push: pushUndo } = useUndo()
   const [viewDate, setViewDate] = useState(() => new Date())
   const [isMobile, setIsMobile] = useState(false)
@@ -254,8 +254,9 @@ void selectedIndex // consumed by keyboard navigation event listeners for task s
         description: description || undefined,
         updatedAt: now,
       })
+      mutate(prev => ({ ...prev, assignments: prev.assignments.map(a => a.id === editing.id ? { ...a, title, subjectId, projectId, dueDate, category, weight, description: description || undefined, updatedAt: now } : a) }))
     } else {
-      await db.assignments.add({
+      const newAssignment = {
         id: uuid(),
         title,
         subjectId,
@@ -267,29 +268,28 @@ void selectedIndex // consumed by keyboard navigation event listeners for task s
         completed: false,
         createdAt: now,
         updatedAt: now,
-      })
+      }
+      await db.assignments.add(newAssignment)
+      mutate(prev => ({ ...prev, assignments: [...prev.assignments, newAssignment] }))
     }
     setModalOpen(false)
-    await loadData()
   }
-
   async function deleteTask(id: string) {
     const a = await softDelete(db.assignments, id)
     if (!a) return
+    mutate(prev => ({ ...prev, assignments: prev.assignments.map(x => x.id === id ? { ...x, deletedAt: a.deletedAt, updatedAt: a.updatedAt } : x) }))
     pushUndo({
       description: `Deleted task "${a.title}"`,
       undo: async () => {
         await db.assignments.put({ ...a, deletedAt: null, updatedAt: isoNow() })
-        await loadData()
+        mutate(prev => ({ ...prev, assignments: prev.assignments.map(x => x.id === id ? { ...x, deletedAt: null, updatedAt: isoNow() } : x) }))
       },
       redo: async () => {
         await db.assignments.put({ ...a, deletedAt: a.deletedAt, updatedAt: isoNow() })
-        await loadData()
+        mutate(prev => ({ ...prev, assignments: prev.assignments.map(x => x.id === id ? { ...x, deletedAt: a.deletedAt, updatedAt: isoNow() } : x) }))
       },
     })
-    await loadData()
   }
-
   function openMarkModal(a: Assignment) {
     setMarkingTask(a)
     setMarkForm(emptyMarkForm())
@@ -304,8 +304,7 @@ void selectedIndex // consumed by keyboard navigation event listeners for task s
 
     setMarkSaving(true)
     const now = isoNow()
-    // Create a Mark
-    await db.marks.add({
+    const newMark = {
       id: uuid(),
       subjectId: markingTask.subjectId,
       name: markingTask.title,
@@ -317,24 +316,22 @@ void selectedIndex // consumed by keyboard navigation event listeners for task s
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
-    })
-    // Mark task complete
+    }
+    await db.marks.add(newMark)
     await db.assignments.update(markingTask.id, { completed: true, updatedAt: now })
+    mutate(prev => ({ ...prev, marks: [...prev.marks, newMark], assignments: prev.assignments.map(a => a.id === markingTask.id ? { ...a, completed: true, updatedAt: now } : a) }))
     setMarkModalOpen(false)
     setMarkingTask(null)
     setMarkSaving(false)
-    await loadData()
   }
-
-  
     async function quickCompleteTask(a: Assignment) {
       if (!a.completed && a.weight > 0) {
         await db.assignments.put({ ...a, completed: true, updatedAt: isoNow() })
         setToast({ id: a.id, title: a.title })
-        await loadData()
+        mutate(prev => ({ ...prev, assignments: prev.assignments.map(x => x.id === a.id ? { ...x, completed: true, updatedAt: isoNow() } : x) }))
       } else {
         await db.assignments.put({ ...a, completed: !a.completed, updatedAt: isoNow() })
-        await loadData()
+        mutate(prev => ({ ...prev, assignments: prev.assignments.map(x => x.id === a.id ? { ...x, completed: !a.completed, updatedAt: isoNow() } : x) }))
       }
     }
 

@@ -74,15 +74,15 @@ export function scheduleReview(
   rating: ReviewRating,
   reviewedAt: string,
   examMode?: { enabled: boolean; dueDate: string } | null,
+  maxReviewInterval?: number | null,
 ): ScheduledState {
   let { stability, difficulty, state, repetitions } = current
 
   const reviewed = new Date(reviewedAt)
 
   if (state === 'new') {
-    return scheduleNew(rating, reviewed, examMode)
+    return scheduleNew(rating, reviewed, examMode, maxReviewInterval)
   }
-
   // Subsequent reviews
   if (rating === 1) {
     // Again → relearning
@@ -92,7 +92,7 @@ export function scheduleReview(
     difficulty = clamp(difficulty + W[7] * (10 - difficulty), 1, 10)
     const intervalDays = Math.max(0.01, stability * 0.3) // short relearning step
     repetitions = 0
-    return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode)
+    return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode, maxReviewInterval)
   }
 
   // Rating >= 2: successful recall
@@ -128,20 +128,20 @@ export function scheduleReview(
   }
 
   intervalDays = Math.max(1, intervalDays)
-  return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode)
+  return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode, maxReviewInterval)
 }
 
 function scheduleNew(
   rating: ReviewRating,
   reviewed: Date,
   examMode?: { enabled: boolean; dueDate: string } | null,
+  maxReviewInterval?: number | null,
 ): ScheduledState {
   let stability: number
   let difficulty: number
   let intervalDays: number
   let state: FsrsState['state']
   let repetitions: number
-
   switch (rating) {
     case 1: // Again
       stability = W[1]
@@ -172,8 +172,7 @@ function scheduleNew(
       repetitions = 1
       break
   }
-
-  return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode)
+  return buildResult(state, stability, difficulty, intervalDays, reviewed, repetitions, examMode, maxReviewInterval)
 }
 
 function buildResult(
@@ -184,6 +183,7 @@ function buildResult(
   reviewed: Date,
   repetitions: number,
   examMode?: { enabled: boolean; dueDate: string } | null,
+  maxReviewInterval?: number | null,
 ): ScheduledState {
   // Exam mode: compress intervals so reviews complete before the exam
   // Only honor exam mode if the due date is actually in the future relative to
@@ -192,7 +192,6 @@ function buildResult(
   if (examMode?.enabled && examMode.dueDate) {
     const examDate = new Date(examMode.dueDate)
     const remainingDays = (examDate.getTime() - reviewed.getTime()) / DAY_MS
-
     if (Number.isFinite(remainingDays) && remainingDays > 0) {
       // Force interval into remaining window
       // New/learning areas get accelerated
@@ -207,9 +206,13 @@ function buildResult(
       intervalDays = Math.min(intervalDays, remainingDays * 0.5)
     }
   }
-
+  // Optional user-defined ceiling: cap the interval so certain areas
+  // (e.g. vocab discovered to be stable enough for 5 months) still cycle
+  // back at least once a month. Must be a positive number of days.
+  if (typeof maxReviewInterval === 'number' && maxReviewInterval > 0) {
+    intervalDays = Math.min(intervalDays, maxReviewInterval)
+  }
   const nextReview = new Date(reviewed.getTime() + intervalDays * DAY_MS)
-
   return {
     state,
     stability,
@@ -220,7 +223,6 @@ function buildResult(
     repetitions,
   }
 }
-
 // ─── Query helpers ───
 
 export function isDueToday(area: { fsrs: FsrsState }): boolean {

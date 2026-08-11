@@ -123,8 +123,8 @@ async function loadAllData(): Promise<AppData> {
   }
 }
 
-const DataContext = createContext<DataContextValue | null>(null)
-
+const DataContext = createContext<AppData | null>(null)
+const DataActionsContext = createContext<Omit<DataContextValue, 'data'> | null>(null)
 export function DataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AppData>(emptyData)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
@@ -133,21 +133,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const loadTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const pullInProgress = useRef(false)
   const loadData = useCallback(async () => {
-    if (pullInProgress.current) {
-      console.log('[loadData] Skipping — pullAllData in progress')
-      return
-    }
+    if (pullInProgress.current) return
     if (loadTimer.current) clearTimeout(loadTimer.current)
     loadTimer.current = setTimeout(async () => {
       loadTimer.current = null
-      const start = performance.now()
       try {
         const data = await loadAllData()
-        console.log('[loadData] Loaded in', (performance.now() - start).toFixed(1), 'ms, subjects:', data.subjects.length, 'sessions:', data.sessions.length)
         setData(data)
         setIsInitialLoad(false)
       } catch (e) {
-        console.error('[loadData] Failed:', e)
         setIsInitialLoad(false)
       }
     }, 80)
@@ -161,7 +155,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       pullInProgress.current = true
       const timeout = setTimeout(() => {
         if (pullInProgress.current) {
-          console.warn('[providers] pullAllData timed out, proceeding with local data')
           pullInProgress.current = false
           void loadData()
         }
@@ -173,9 +166,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           try {
             const { ensureDailyBackup } = await import('../lib/cloud-backup')
             await ensureDailyBackup(uid)
-          } catch (e) {
-            console.warn('[backup] Failed to ensure daily backup:', e)
-          }
+          } catch (e) {}
         }
       } finally {
         clearTimeout(timeout)
@@ -190,23 +181,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
     window.addEventListener('momentum-data-synced', onSynced)
     return () => window.removeEventListener('momentum-data-synced', onSynced)
   }, [loadData])
-  // On startup, flush any dirty tables that survived from a previous session
   flushPendingDirtyTables()
-  const value = useMemo(
-    () => ({ data, isLoading: isInitialLoad, scope, rangePreset, setScope, setRangePreset, loadData, mutate }),
-    [data, isInitialLoad, scope, rangePreset, setScope, setRangePreset, loadData, mutate],
+  const actions = useMemo(
+    () => ({ loadData, mutate, scope, rangePreset, setScope, setRangePreset, isLoading: isInitialLoad }),
+    [loadData, mutate, scope, rangePreset, setScope, setRangePreset, isInitialLoad],
   )
-
-  return <DataContext.Provider value={value}>{children}</DataContext.Provider>
+  return (
+    <DataActionsContext.Provider value={actions}>
+      <DataContext.Provider value={data}>{children}</DataContext.Provider>
+    </DataActionsContext.Provider>
+  )
 }
 export function useData() {
-  const context = useContext(DataContext)
-  if (!context) throw new Error('useData must be used within DataProvider')
-  return context
+  const data = useContext(DataContext)
+  const actions = useContext(DataActionsContext)
+  if (!data || !actions) throw new Error('useData must be used within DataProvider')
+  return { data, ...actions }
 }
-
 export function useDataSelector<T>(selector: (data: AppData) => T): T {
-  const { data } = useData()
+  const data = useContext(DataContext)
+  if (!data) throw new Error('useDataSelector must be used within DataProvider')
   return useMemo(() => selector(data), [data])
 }
 

@@ -20,7 +20,7 @@ const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
 
 
 export default function HabitsPage() {
-  const { data, loadData } = useData()
+  const { data, mutate } = useData()
   const { push: pushUndo } = useUndo()
   const settings = loadSettings()
   // Local optimistic overlay for habit logs — written to Dexie, then reflected
@@ -29,7 +29,7 @@ export default function HabitsPage() {
   const [localLogDeletions, setLocalLogDeletions] = useState<Set<string>>(new Set())
   const effectiveHabitLogs = useMemo(
     () => data.habitLogs
-      .filter((l) => !localLogDeletions.has(l.id))
+      .filter((l) => !l.deletedAt && !localLogDeletions.has(l.id))
       .concat(localLogAdditions),
     [data.habitLogs, localLogAdditions, localLogDeletions],
   )
@@ -55,6 +55,9 @@ export default function HabitsPage() {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [archiveConfirm, setArchiveConfirm] = useState<string | null>(null)
+  const [finishConfirm, setFinishConfirm] = useState<string | null>(null)
+  const [resetConfirm, setResetConfirm] = useState<string | null>(null)
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [dayDetailDate, setDayDetailDate] = useState<string | null>(null)
   // Tracks whether we opened the add-log modal from the day detail modal,
   // so we can close the day detail after saveLog() succeeds.
@@ -81,9 +84,10 @@ export default function HabitsPage() {
       })
   }, [effectiveHabitLogs, selectedId])
   const archivedHabits = data.habits.filter((h) => !!h.archivedAt && !h.deletedAt)
-  // Active = not archived AND not parked as a potential habit
-  const currentHabits = data.habits.filter((h) => !h.archivedAt && h.status !== 'potential' && !h.deletedAt)
-  const potentialHabits = data.habits.filter((h) => !h.archivedAt && h.status === 'potential' && !h.deletedAt)
+  const finishedHabits = data.habits.filter((h) => !!h.finishedAt && !h.archivedAt && !h.deletedAt)
+  // Active = not archived, not finished, and not parked as a potential habit
+  const currentHabits = data.habits.filter((h) => !h.archivedAt && !h.finishedAt && h.status !== 'potential' && !h.deletedAt)
+  const potentialHabits = data.habits.filter((h) => !h.archivedAt && !h.finishedAt && h.status === 'potential' && !h.deletedAt)
   const goodHabits = currentHabits.filter((h) => h.kind === 'good')
   const badHabits = currentHabits.filter((h) => h.kind === 'bad')
   const selectedHabit = data.habits.find((h) => h.id === selectedId && !h.deletedAt) ?? null
@@ -186,16 +190,19 @@ export default function HabitsPage() {
       const isTick = habit?.mode === 'tick'
       const subject = habit?.kind === 'bad' ? `Quitting ${habit?.name ?? 'habit'}` : (habit?.name ?? 'habit')
       if (isTick) {
-        const existing = live.habitLogs.find((l) => l.habitId === habitId && l.date === todayDate)
+        // Check effectiveHabitLogs (includes optimistic local additions) so a
+        // just-added log is seen immediately — prevents duplicate logs on
+        // rapid re-click.
+        const existing = effectiveHabitLogs.find((l) => l.habitId === habitId && l.date === todayDate)
         if (existing) {
           setLocalLogDeletions((prev) => new Set(prev).add(existing.id))
           try {
             await db.habitLogs.delete(existing.id)
-            await loadData()
+            mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== existing.id) }))
             pushUndo({
               description: `Unchecked: ${subject}`,
-              undo: async () => { await db.habitLogs.put(existing); await loadData() },
-              redo: async () => { await db.habitLogs.delete(existing.id); await loadData() },
+              undo: async () => { await db.habitLogs.put(existing); mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, existing] })) },
+              redo: async () => { await db.habitLogs.delete(existing.id); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== existing.id) })) },
             })
           } catch (e) {
             setLocalLogDeletions((prev) => { const next = new Set(prev); next.delete(existing.id); return next })
@@ -206,11 +213,11 @@ export default function HabitsPage() {
           setLocalLogAdditions((prev) => [...prev, newLog])
           try {
             await db.habitLogs.add(newLog)
-            await loadData()
+            mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] }))
             pushUndo({
               description: `Ticked: ${subject}`,
-              undo: async () => { await db.habitLogs.delete(newLog.id); await loadData() },
-              redo: async () => { await db.habitLogs.add(newLog); await loadData() },
+              undo: async () => { await db.habitLogs.delete(newLog.id); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== newLog.id) })) },
+              redo: async () => { await db.habitLogs.add(newLog); mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] })) },
             })
           } catch (e) {
             setLocalLogAdditions((prev) => prev.filter((l) => l.id !== newLog.id))
@@ -223,11 +230,11 @@ export default function HabitsPage() {
       setLocalLogAdditions((prev) => [...prev, newLog])
       try {
         await db.habitLogs.add(newLog)
-        await loadData()
+        mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] }))
         pushUndo({
           description: `Logged ${habit?.kind === 'bad' ? 'lapse' : 'occurrence'}: ${subject}`,
-          undo: async () => { await db.habitLogs.delete(newLog.id); await loadData() },
-          redo: async () => { await db.habitLogs.add(newLog); await loadData() },
+          undo: async () => { await db.habitLogs.delete(newLog.id); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== newLog.id) })) },
+          redo: async () => { await db.habitLogs.add(newLog); mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] })) },
         })
       } catch (e) {
         setLocalLogAdditions((prev) => prev.filter((l) => l.id !== newLog.id))
@@ -251,7 +258,7 @@ export default function HabitsPage() {
         if (logNote.trim()) update.note = logNote.trim()
         if (parsedValue !== undefined) update.value = parsedValue
         await db.habitLogs.update(editLog.id, update)
-        await loadData()
+        mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.map(l => l.id === editLog.id ? { ...l, ...update } : l) }))
         if (editLogCameFromDayDetail) {
           setDayDetailDate(null)
           setEditLogCameFromDayDetail(false)
@@ -261,8 +268,8 @@ export default function HabitsPage() {
         if (prevLog) {
           pushUndo({
             description: `Edited log for "${habit?.name ?? 'habit'}"`,
-            undo: async () => { await db.habitLogs.update(editLog.id, prevLog); await loadData() },
-            redo: async () => { await db.habitLogs.update(editLog.id, { date: logDate, time: logTime || undefined, note: logNote.trim() || undefined, value: parsedValue, updatedAt: isoNow() }); await loadData() },
+            undo: async () => { await db.habitLogs.update(editLog.id, prevLog); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.map(l => l.id === editLog.id ? { ...prevLog, ...l } : l) })) },
+            redo: async () => { await db.habitLogs.update(editLog.id, { date: logDate, time: logTime || undefined, note: logNote.trim() || undefined, value: parsedValue, updatedAt: isoNow() }); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.map(l => l.id === editLog.id ? { ...l, date: logDate, time: logTime || undefined, note: logNote.trim() || undefined, value: parsedValue, updatedAt: isoNow() } : l) })) },
           })
         }
       } else {
@@ -277,7 +284,7 @@ export default function HabitsPage() {
         if (logNote.trim()) newLog.note = logNote.trim()
         if (parsedValue !== undefined) newLog.value = parsedValue
         await db.habitLogs.add(newLog)
-        await loadData()
+        mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] }))
         if (editLogCameFromDayDetail) {
           setDayDetailDate(null)
           setEditLogCameFromDayDetail(false)
@@ -288,8 +295,8 @@ export default function HabitsPage() {
         const saveLogSubject = habit?.kind === 'bad' && habit ? `Quitting ${habit.name}` : (habit?.name ?? 'habit')
         pushUndo({
           description: `Logged ${saveLogVerb}: ${saveLogSubject}`,
-          undo: async () => { await db.habitLogs.delete(newLog.id); await loadData() },
-          redo: async () => { await db.habitLogs.add(newLog); await loadData() },
+          undo: async () => { await db.habitLogs.delete(newLog.id); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== newLog.id) })) },
+          redo: async () => { await db.habitLogs.add(newLog); mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, newLog] })) },
         })
       }
     } catch (e) { console.error('Failed to save log', e) }
@@ -298,11 +305,11 @@ export default function HabitsPage() {
   async function deleteLog(log: HabitLog) {
     try {
       await db.habitLogs.delete(log.id)
-      await loadData()
+      mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== log.id) }))
       pushUndo({
         description: `Deleted log${log.note ? `: ${log.note}` : ''}`,
-        undo: async () => { await db.habitLogs.add(log); await loadData() },
-        redo: async () => { await db.habitLogs.delete(log.id); await loadData() },
+        undo: async () => { await db.habitLogs.add(log); mutate(prev => ({ ...prev, habitLogs: [...prev.habitLogs, log] })) },
+        redo: async () => { await db.habitLogs.delete(log.id); mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.filter(l => l.id !== log.id) })) },
       })
     } catch (e) { console.error('Failed to delete log', e) }
   }
@@ -354,38 +361,37 @@ export default function HabitsPage() {
       const finalName = kind === 'bad' && !trimmed.startsWith('Quitting ') ? `Quitting ${trimmed}` : trimmed
       const status: 'active' | 'potential' = parkForLater ? 'potential' : newHabitStatus
       if (editHabit) {
-        await db.habits.update(editHabit.id, { name: finalName, kind, mode: habitMode, color, archivedAfterDays, targetPerDay, updatedAt: isoNow() })
+        const updated = { name: finalName, kind, mode: habitMode, color, archivedAfterDays, targetPerDay, updatedAt: isoNow() }
+        await db.habits.update(editHabit.id, updated)
+        mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === editHabit.id ? { ...h, ...updated } : h) }))
       } else {
-        await db.habits.add({ id: uuid(), name: finalName, kind, mode: habitMode, color, archivedAfterDays, targetPerDay, status, createdAt: isoNow(), updatedAt: isoNow() })
+        const newHabit = { id: uuid(), name: finalName, kind, mode: habitMode, color, archivedAfterDays, targetPerDay, status, createdAt: isoNow(), updatedAt: isoNow() }
+        await db.habits.add(newHabit)
+        mutate(prev => ({ ...prev, habits: [...prev.habits, newHabit] }))
       }
       setShowModal(false)
-      await loadData()
     } catch (e) { console.error('Failed to save habit', e) }
   }
-
   async function promoteHabit(id: string) {
     await db.habits.update(id, { status: 'active', updatedAt: isoNow() })
-    await loadData()
+    mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, status: 'active', updatedAt: isoNow() } : h) }))
   }
-
   async function demoteToPotential(id: string) {
     await db.habits.update(id, { status: 'potential', updatedAt: isoNow() })
-    await loadData()
+    mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, status: 'potential', updatedAt: isoNow() } : h) }))
   }
-
   async function archiveHabitFn(id: string) {
     try {
       await db.habits.update(id, { archivedAt: isoNow(), updatedAt: isoNow() })
       if (selectedId === id) setSelectedId(null)
       setArchiveConfirm(null)
-      await loadData()
+      mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, archivedAt: isoNow(), updatedAt: isoNow() } : h) }))
     } catch (e) { console.error('Failed to archive habit', e) }
   }
-
   async function unarchiveHabitFn(id: string) {
     try {
       await db.habits.update(id, { archivedAt: null, updatedAt: isoNow() })
-      await loadData()
+      mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, archivedAt: null, updatedAt: isoNow() } : h) }))
     } catch (e) { console.error('Failed to unarchive habit', e) }
   }
 
@@ -403,25 +409,58 @@ export default function HabitsPage() {
     }
     if (selectedId === id) setSelectedId(null)
     setDeleteConfirm(null)
-    await loadData()
+    mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, deletedAt: now, updatedAt: now } : h), habitLogs: prev.habitLogs.map(l => logs.some(lo => lo.id === l.id) ? { ...l, deletedAt: now, updatedAt: now } : l) }))
     pushUndo({
       description: `Deleted habit "${habit.name}"`,
-      undo: async () => {
-        await db.habits.put({ ...habit, deletedAt: null, updatedAt: isoNow() })
-        for (const log of logs) {
-          await db.habitLogs.put({ ...log, deletedAt: null, updatedAt: isoNow() })
-        }
-        await loadData()
-      },
-      redo: async () => {
-        const redoNow = isoNow()
-        await db.habits.update(id, { deletedAt: redoNow, updatedAt: redoNow })
-        for (const log of logs) {
-          await db.habitLogs.update(log.id, { deletedAt: redoNow, updatedAt: redoNow })
-        }
-        await loadData()
-      },
+        undo: async () => {
+          await db.habits.put({ ...habit, deletedAt: null, updatedAt: isoNow() })
+          for (const l of logs) {
+            await db.habitLogs.put({ ...l, deletedAt: null, updatedAt: isoNow() })
+          }
+          mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...habit, deletedAt: null, updatedAt: isoNow() } : h), habitLogs: prev.habitLogs.map(l => logs.some(lo => lo.id === l.id) ? { ...l, deletedAt: null, updatedAt: isoNow() } : l) }))
+        },
+        redo: async () => {
+          const redoNow = isoNow()
+          await db.habits.update(id, { deletedAt: redoNow, updatedAt: redoNow })
+          for (const l of logs) {
+            await db.habitLogs.update(l.id, { deletedAt: redoNow, updatedAt: redoNow })
+          }
+          mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, deletedAt: redoNow, updatedAt: redoNow } : h), habitLogs: prev.habitLogs.map(l => logs.some(lo => lo.id === l.id) ? { ...l, deletedAt: redoNow, updatedAt: redoNow } : l) }))
+        },
     })
+  }
+  async function finishHabitFn(id: string) {
+    try {
+      await db.habits.update(id, { finishedAt: isoNow(), updatedAt: isoNow() })
+      if (selectedId === id) setSelectedId(null)
+      setFinishConfirm(null)
+      mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, finishedAt: isoNow(), updatedAt: isoNow() } : h) }))
+    } catch (e) { console.error('Failed to finish habit', e) }
+  }
+  async function unfinishHabitFn(id: string) {
+    try {
+      await db.habits.update(id, { finishedAt: null, updatedAt: isoNow() })
+      mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, finishedAt: null, updatedAt: isoNow() } : h) }))
+    } catch (e) { console.error('Failed to unfinish habit', e) }
+  }
+  async function resetHabitDataFn(id: string) {
+    try {
+      const logs = await db.habitLogs.where('habitId').equals(id).toArray()
+      const now = isoNow()
+      for (const log of logs) {
+        await db.habitLogs.update(log.id, { deletedAt: now, updatedAt: now })
+      }
+      // Clear optimistic overlays for this habit so locally-added logs don't
+      // reappear after the reset.
+      setLocalLogAdditions((prev) => prev.filter((l) => l.habitId !== id))
+      setLocalLogDeletions((prev) => {
+        const next = new Set(prev)
+        for (const l of logs) next.delete(l.id)
+        return next
+      })
+      setResetConfirm(null)
+      mutate(prev => ({ ...prev, habitLogs: prev.habitLogs.map(l => logs.some(lo => lo.id === l.id) ? { ...l, deletedAt: now, updatedAt: now } : l) }))
+    } catch (e) { console.error('Failed to reset habit data', e) }
   }
 
   const calendarDays = useMemo(() => {
@@ -441,16 +480,23 @@ export default function HabitsPage() {
     const reachedThreshold = daysLogged >= archiveThreshold
     const isTickMode = habit.mode === 'tick'
     const isTickedToday = isTickMode && todayCount > 0
-    const [menuOpen, setMenuOpen] = useState(false)
+    const isMenuOpen = openMenuId === habit.id
     const menuRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
-      if (!menuOpen) return
+      if (!isMenuOpen) return
       const handler = (e: MouseEvent) => {
-        if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+        if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpenMenuId(null)
+      }
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setOpenMenuId(null)
       }
       document.addEventListener('mousedown', handler)
-      return () => document.removeEventListener('mousedown', handler)
-    }, [menuOpen])
+      document.addEventListener('keydown', onKey)
+      return () => {
+        document.removeEventListener('mousedown', handler)
+        document.removeEventListener('keydown', onKey)
+      }
+    }, [isMenuOpen])
     const last7 = Array.from({ length: 7 }, (_, i) => {
       const d = subDays(new Date(), 6 - i)
       const ds = format(d, 'yyyy-MM-dd')
@@ -509,8 +555,8 @@ export default function HabitsPage() {
               type="button"
               aria-label="Habit actions"
               aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }}
+              aria-expanded={isMenuOpen}
+              onClick={(e) => { e.stopPropagation(); setOpenMenuId(isMenuOpen ? null : habit.id) }}
               className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -519,7 +565,7 @@ export default function HabitsPage() {
                 <circle cx="13" cy="8" r="1.5" />
               </svg>
             </button>
-            {menuOpen && (
+            {isMenuOpen && (
               <div
                 role="menu"
                 className="absolute right-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800"
@@ -529,26 +575,38 @@ export default function HabitsPage() {
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setMenuOpen(false); openEditHabit(habit) }}
+                  onClick={() => { setOpenMenuId(null); openEditHabit(habit) }}
                 >Edit</button>
                 <button
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setMenuOpen(false); demoteToPotential(habit.id) }}
+                  onClick={() => { setOpenMenuId(null); demoteToPotential(habit.id) }}
                 >Park</button>
                 <button
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setMenuOpen(false); setArchiveConfirm(habit.id) }}
+                  onClick={() => { setOpenMenuId(null); setArchiveConfirm(habit.id) }}
                 >Archive</button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
+                  onClick={() => { setOpenMenuId(null); setFinishConfirm(habit.id) }}
+                >Mark as Done</button>
                 <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
                 <button
                   type="button"
                   role="menuitem"
+                  className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
+                  onClick={() => { setOpenMenuId(null); setResetConfirm(habit.id) }}
+                >Reset Data</button>
+                <button
+                  type="button"
+                  role="menuitem"
                   className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                  onClick={() => { setMenuOpen(false); setDeleteConfirm(habit.id) }}
+                  onClick={() => { setOpenMenuId(null); setDeleteConfirm(habit.id) }}
                 >Delete</button>
               </div>
             )}
@@ -713,6 +771,30 @@ export default function HabitsPage() {
                 <div className="flex items-center justify-between">
                   <div className="font-medium text-slate-700 dark:text-slate-300">{h.name} (Archived)</div>
                   <Button variant="secondary" size="sm" onClick={() => unarchiveHabitFn(h.id)}>Restore</Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </Collapsible>
+      )}
+
+      {finishedHabits.length > 0 && (
+        <Collapsible id="finished-habits" title="Finished Habits" count={finishedHabits.length} defaultOpen={false} accent="#0f766e">
+          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+            Habits you no longer need to track, kept for reference.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {finishedHabits.map((h) => (
+              <Card key={h.id} className="opacity-80">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium text-slate-700 dark:text-slate-300">{h.name}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">Done{h.finishedAt ? ` · ${sessionLocalDate(h.finishedAt)}` : ''}</div>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="secondary" size="sm" onClick={() => unfinishHabitFn(h.id)}>Restore</Button>
+                    <Button variant="danger" size="sm" onClick={() => setDeleteConfirm(h.id)}>Delete</Button>
+                  </div>
                 </div>
               </Card>
             ))}
@@ -992,6 +1074,29 @@ export default function HabitsPage() {
           <div className="flex gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => setArchiveConfirm(null)}>Cancel</Button>
             <Button variant="primary" className="flex-1" onClick={() => archiveConfirm && archiveHabitFn(archiveConfirm)}>Archive</Button>
+          </div>
+        </div>
+      </Modal>
+      <Modal open={finishConfirm !== null} onClose={() => setFinishConfirm(null)} title="Mark Habit as Done?">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Mark this habit as done? It moves to a separate &quot;Finished&quot; section, stops counting toward your habit limit, and stops showing reminders — but the data is preserved.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setFinishConfirm(null)}>Cancel</Button>
+            <Button variant="primary" className="flex-1" onClick={() => finishConfirm && finishHabitFn(finishConfirm)}>Mark as Done</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={resetConfirm !== null} onClose={() => setResetConfirm(null)} title="Reset Habit Data?">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            This will clear all logs for this habit (streak resets to zero, history removed) but keeps the habit itself. The habit stays in your active list.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setResetConfirm(null)}>Cancel</Button>
+            <Button variant="danger" className="flex-1" onClick={() => resetConfirm && resetHabitDataFn(resetConfirm)}>Reset Data</Button>
           </div>
         </div>
       </Modal>

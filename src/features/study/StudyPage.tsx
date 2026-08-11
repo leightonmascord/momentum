@@ -25,6 +25,7 @@ export default function StudyPage() {
   const [description, setDescription] = useState('')
   const [subjectId, setSubjectId] = useState('')
   const [tags, setTags] = useState('')
+  const [maxReviewInterval, setMaxReviewInterval] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
   const activeAreas = useMemo(
@@ -50,7 +51,6 @@ export default function StudyPage() {
     })
     return groups
   }, [activeAreas])
-
   function openModal(area?: StudyArea) {
     if (area) {
       setEditArea(area)
@@ -58,24 +58,25 @@ export default function StudyPage() {
       setDescription(area.description || '')
       setSubjectId(area.subjectId)
       setTags(area.tags?.join(', ') || '')
-      setTags(area.tags?.join(', ') || '')
+      setMaxReviewInterval(area.maxReviewInterval ? String(area.maxReviewInterval) : '')
     } else {
       setEditArea(null)
       setName('')
       setDescription('')
       setSubjectId(subjects[0]?.id || '')
       setTags('')
-      setTags('')
+      setMaxReviewInterval('')
     }
     setShowModal(true)
   }
 
   async function handleSave() {
     if (!name.trim() || !subjectId) return
-
     const now = isoNow()
     const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean)
-
+    const maxIntervalRaw = maxReviewInterval.trim()
+    const parsedMaxInterval = maxIntervalRaw ? Number(maxIntervalRaw) : null
+    const maxInterval = parsedMaxInterval && parsedMaxInterval > 0 ? parsedMaxInterval : null
     if (editArea) {
       const updated: StudyArea = {
         ...editArea,
@@ -83,6 +84,7 @@ export default function StudyPage() {
         description: description.trim() || undefined,
         subjectId,
         tags: tagList.length ? tagList : undefined,
+        maxReviewInterval: maxInterval,
         updatedAt: now,
       }
       await db.studyAreas.put(updated)
@@ -98,6 +100,7 @@ export default function StudyPage() {
         name: name.trim(),
         description: description.trim() || undefined,
         tags: tagList.length ? tagList : undefined,
+        maxReviewInterval: maxInterval,
         fsrs: createInitialState(now),
         createdAt: now,
         updatedAt: now,
@@ -287,7 +290,25 @@ export default function StudyPage() {
               className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
             />
           </div>
-          <div className="flex justify-end gap-3 pt-4">
+          <div>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">
+              Max review interval (days, optional)
+            </label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={maxReviewInterval}
+              onChange={(e) => setMaxReviewInterval(e.target.value)}
+              placeholder="e.g., 30 (cap at once a month)"
+              className="w-full px-3 py-2 border rounded-md bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100"
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              If set, this area will never be scheduled further in the future than this many days
+              &#8212; useful for stable items you want to cycle back to at least once a month.
+            </p>
+          </div>
+           <div className="flex justify-end gap-3 pt-4">
             <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={!name.trim() || !subjectId}>Save</Button>
           </div>

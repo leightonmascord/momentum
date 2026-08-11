@@ -16,17 +16,21 @@ export type AllGroupsPresence = Map<string, GroupPresence[]>
  * the returned map (so group presence shows "other people studying").
  */
 export function useAllGroupsPresence(uid: string | null, filterUid?: string | null): AllGroupsPresence {
-  const [presenceMap, setPresenceMap] = useState<AllGroupsPresence>(new Map())
   const unsubscribes = useRef<(() => void)[]>([])
 
   // Bumped every second so elapsedSeconds ticks
   const [, setTick] = useState(0)
 
+  // Use a ref for the presence map so we don't re-render on every Firestore update,
+  // only re-render when the count of records actually changes (to trigger tick).
+  const presenceMapRef = useRef<AllGroupsPresence>(new Map())
+
   useEffect(() => {
     // Tear down old subscriptions
     unsubscribes.current.forEach((u) => u())
     unsubscribes.current = []
-    setPresenceMap(new Map())
+    presenceMapRef.current = new Map()
+    setTick((t) => t + 1) // Trigger render for empty state
 
     if (!uid) return
 
@@ -45,7 +49,8 @@ export function useAllGroupsPresence(uid: string | null, filterUid?: string | nu
             : records
           snapshots[g.id] = filtered
           if (!cancelled) {
-            setPresenceMap(new Map(Object.entries(snapshots)))
+            presenceMapRef.current = new Map(Object.entries(snapshots))
+            setTick((t) => t + 1) // Re-render when data updates
           }
         })
         // Wrap unsub so a permission error on this group also removes it
@@ -53,7 +58,10 @@ export function useAllGroupsPresence(uid: string | null, filterUid?: string | nu
         const wrappedUnsub = () => {
           failedGroups.add(g.id)
           delete snapshots[g.id]
-          if (!cancelled) setPresenceMap(new Map(Object.entries(snapshots)))
+          if (!cancelled) {
+            presenceMapRef.current = new Map(Object.entries(snapshots))
+            setTick((t) => t + 1)
+          }
           unsub()
         }
         unsubscribes.current.push(wrappedUnsub)
@@ -66,6 +74,8 @@ export function useAllGroupsPresence(uid: string | null, filterUid?: string | nu
       unsubscribes.current = []
     }
   }, [uid, filterUid])
+
+  const presenceMap = presenceMapRef.current
 
   // Total active presence records across all groups — drives the tick interval.
   const activeCount = useMemo(

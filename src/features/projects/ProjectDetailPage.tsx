@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid'
 import { useData } from '../../app/providers'
 import { db } from '../../db/app-db'
 import { cn, formatMinutes, isoNow, sessionLocalDate, softDelete } from '../../lib/utils'
+import { sessionIdFor } from '../../lib/timer-persistence'
 import { useUndo } from '../../lib/use-undo'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
@@ -135,12 +136,13 @@ export default function ProjectDetailPage() {
     const timeTask = timeTaskId ? tasks.find((t) => t.id === timeTaskId) : undefined
     const now = new Date()
     const start = new Date(now.getTime() - timeMinutes * 60_000)
+    const startAt = start.toISOString()
     const session: Session = {
-      id: uuid(),
+      id: sessionIdFor(startAt, p.subjectId, timeMinutes),
       subjectId: p.subjectId,
       projectId: p.id,
       assignmentId: timeTask?.id ?? null,
-      startAt: start.toISOString(),
+      startAt,
       endAt: now.toISOString(),
       durationMinutes: timeMinutes,
       note: timeNote.trim() || (timeTask ? `Task: ${timeTask.title}` : undefined),
@@ -148,7 +150,7 @@ export default function ProjectDetailPage() {
       createdAt: isoNow(),
       updatedAt: isoNow(),
     }
-    await db.sessions.add(session)
+    await db.sessions.put(session)
     await loadData()
     pushUndo({
       description: `Logged ${timeMinutes}m for ${p.name}${timeTask ? ` (${timeTask.title})` : ''}`,
