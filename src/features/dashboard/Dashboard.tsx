@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
+import { TodayChecklist } from '../../components/widgets/TodayChecklist'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
 import { SubjectBreakdown } from '../../components/widgets/SubjectBreakdown'
 import { formatTotalToday, getLiveTimerSeconds, getLiveTimerSubjectId, getTotalTodayMinutes, isTimerActive } from '../../lib/timer-utils'
@@ -14,16 +15,17 @@ import { PageSpinner } from '../../components/ui/Spinner'
 import { NumberInput } from '../../components/ui/NumberInput'
 import { Modal } from '../../components/ui/Modal'
 import { HoverCard } from '../../components/ui/HoverCard'
-import { ContextMenu } from '../../components/ui/ContextMenu'
+import { ContextMenu, type ContextMenuItem } from '../../components/ui/ContextMenu'
 import { useSwipe } from '../../lib/use-swipe'
 import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString } from '../../lib/utils'
 import { loadSettings } from '../../lib/settings-store'
 import { useStreak } from '../../lib/use-streak'
 import { db } from '../../db/app-db'
 import { updateRoutineLogsForSession, revertRoutineLogsForSession, updateStreakDayForSession, revertStreakDayForSession } from '../../lib/routine-tracker'
+import { sessionIdFor } from '../../lib/timer-persistence'
 import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
-import type { Session, DayOfWeek, RoutineLog } from '../../domain/types'
+import type { Session, DayOfWeek, RoutineLog, Routine } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
@@ -33,10 +35,11 @@ import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalL
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
 function CustomizeRow({
-  id, label, layoutMode, cols, config, onToggle, onSetSize, onSetPx,
+  id, label, visible, layoutMode, cols, config, onToggle, onSetSize, onSetPx,
 }: {
   id: string
   label: string
+  visible: boolean
   layoutMode: 'grid' | 'freeform'
   cols: number
   config: { height?: number } | undefined
@@ -75,12 +78,12 @@ function CustomizeRow({
       </button>
       <input
         type="checkbox"
-        checked
+        checked={visible}
         onChange={onToggle}
         className="rounded border-slate-300"
-        aria-label={`Hide ${label}`}
+        aria-label={visible ? `Hide ${label}` : `Show ${label}`}
       />
-      <span className="flex-1 text-sm min-w-[8rem]">{label}</span>
+      <span className={cn('flex-1 text-sm min-w-[8rem]', !visible && 'text-slate-400 dark:text-slate-500')}>{label}</span>
       {layoutMode === 'grid' ? (
         <div className="flex items-center gap-1">
           <span className="text-xs text-slate-500">Width</span>
@@ -190,20 +193,30 @@ function SessionRow({
         <div className="flex items-center gap-2">
           <div className="text-sm text-slate-600">{formatMinutes(session.durationMinutes)}</div>
           <div className="relative">
-            <button type="button" aria-label="More actions" onClick={() => setMenuSessionId(menuSessionId === session.id ? null : session.id)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700">
+            <button
+              type="button"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              aria-expanded={menuSessionId === session.id}
+              onClick={() => setMenuSessionId(menuSessionId === session.id ? null : session.id)}
+              className="relative z-40 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700"
+            >
               <span className="block text-lg leading-none">⋯</span>
             </button>
             {menuSessionId === session.id && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setMenuSessionId(null)} />
-                <div className="absolute right-0 z-30 mt-1 w-36 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setViewSession(session); setViewModalOpen(true); setMenuSessionId(null) }}>
+                <div className="fixed inset-0 z-20" onClick={() => setMenuSessionId(null)} aria-hidden="true" />
+                <div
+                  role="menu"
+                  className="absolute right-0 z-30 mt-1 w-36 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-800"
+                >
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { setViewSession(session); setViewModalOpen(true); setMenuSessionId(null) }}>
                     View details
                   </button>
-                  <button type="button" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { copySessionInfo(session); setMenuSessionId(null) }}>
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { copySessionInfo(session); setMenuSessionId(null) }}>
                     Copy
                   </button>
-                  <button type="button" className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { deleteSession(session.id); setMenuSessionId(null) }}>
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700" onClick={() => { deleteSession(session.id); setMenuSessionId(null) }}>
                     Delete
                   </button>
                 </div>
@@ -220,7 +233,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData, mutate } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, runCascade } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -229,6 +242,22 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // Measured freeform container width, so widgets can use the full viewport
+  // on wide monitors instead of being capped at a hardcoded 1200px.
+  const [freeformWidth, setFreeformWidth] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || layoutMode !== 'freeform') return
+    const measure = () => setFreeformWidth(el.getBoundingClientRect().width)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [layoutMode])
+  const dragOriginRef = useRef<{ id: string; snapshot: { x?: number; y?: number; width?: number; height?: number } } | null>(null)
+  // Full snapshot of all widget configs at drag start, so undo restores the
+ // entire cascade, not just the dragged widget.
+  const widgetConfigsSnapshotRef = useRef<Record<string, { x?: number; y?: number; width?: number; height?: number }> | null>(null)
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
@@ -367,6 +396,15 @@ export default function Dashboard() {
       document.removeEventListener('keydown', onKey)
     }
   }, [fabOpen])
+  // Close session kebab menu on Escape
+  useEffect(() => {
+    if (!menuSessionId) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuSessionId(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [menuSessionId])
   const loggingRef = useRef(false)
   async function handleLogTime() {
     if (loggingRef.current) return
@@ -396,7 +434,7 @@ export default function Dashboard() {
       if (!actualSubjectId) return
       const taskNote = note || (task ? `Task: ${task.title}` : undefined)
       const session: Session = {
-        id: uuid(),
+        id: sessionIdFor(startAt, actualSubjectId, logDuration),
         subjectId: actualSubjectId,
         projectId: project?.id ?? null,
         assignmentId: task?.id ?? null,
@@ -411,22 +449,21 @@ export default function Dashboard() {
         noTime
       }
       const subjectName = data.subjects.find((s) => s.id === actualSubjectId)?.name ?? 'Unknown Subject'
-      // Parallel save: DB + background maintenance
-      await Promise.all([
-        db.sessions.add(session),
-        updateRoutineLogsForSession(session),
-        updateStreakDayForSession(session)
-      ])
-      // Instant UI update — add session to context without waiting for full reload
+      // Instant UI update FIRST — add session to context without waiting for DB
       mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] }))
+      // Fire-and-forget DB + maintenance writes. Errors are logged but never block the UI.
+      void db.sessions.put(session).catch(err => console.error('Failed to persist session:', err))
+      void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+      void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak day:', err))
       syncSession(session, subjectName) // Fire-and-forget sync
-      void loadData() // Background full refresh for consistency
+      // No background loadData() — the optimistic mutate() above already shows the session.
+      // Skipping the full IndexedDB re-fetch makes the button feel instant.
       let description = `Logged ${logDuration}m${project ? ` for ${project.name}` : ` study for ${subjectName}`}`
       if (task) description += ` (${task.title})`
       push({
         description,
-        undo: async () => { await db.sessions.delete(session.id); await revertStreakDayForSession(session); await loadData() },
-        redo: async () => { await db.sessions.add(session); await updateStreakDayForSession(session); await loadData() },
+        undo: async () => { await db.sessions.delete(session.id); await revertStreakDayForSession(session); mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== session.id) })) },
+        redo: async () => { await db.sessions.put(session); await updateStreakDayForSession(session); mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] })) },
       })
       sessionStorage.removeItem(LOG_FORM_KEY)
       setLogSubjectId(''); setLogProjectId(''); setLogTaskId(''); setLogTime(''); setLogNote(''); setLogFocusTag(null)
@@ -476,44 +513,42 @@ export default function Dashboard() {
     }
     await db.sessions.update(editLog.id, updated)
     await updateStreakDayForSession({ ...editLog, ...updated })
-    await loadData()
+    mutate(prev => ({
+      ...prev,
+      sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, ...updated } : s),
+    }))
     setEditLog(null)
     push({
       description: `Edited session`,
-      undo: async () => { await db.sessions.update(editLog.id, { startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt }); await loadData() },
-      redo: async () => { await db.sessions.update(editLog.id, updated); await loadData() },
+      undo: async () => { await db.sessions.update(editLog.id, { startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt }); mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt } : s) })) },
+      redo: async () => { await db.sessions.update(editLog.id, updated); mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, ...updated } : s) })) },
     })
   }
   async function deleteSession(id: string) {
     const session = data.sessions.find((s) => s.id === id)
     if (!session) return
     await db.sessions.delete(id)
-    // Instant UI update — remove from context without waiting for full reload
     mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== id) }))
     syncSessionDelete(id)
     await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)])
-    void loadData()
     push({
       description: `Deleted session (${session.durationMinutes}m)`,
-      undo: async () => { await db.sessions.add(session); await Promise.all([updateRoutineLogsForSession(session), updateStreakDayForSession(session)]); await syncSession(session, data.subjects.find(s => s.id === session.subjectId)?.name ?? 'Unknown'); await loadData() },
-      redo: async () => { await db.sessions.delete(id); await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)]); await syncSessionDelete(id); await loadData() },
+      undo: async () => { await db.sessions.add(session); await Promise.all([updateRoutineLogsForSession(session), updateStreakDayForSession(session)]); await syncSession(session, data.subjects.find(s => s.id === session.subjectId)?.name ?? 'Unknown'); mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] })) },
+      redo: async () => { await db.sessions.delete(id); await Promise.all([revertRoutineLogsForSession(session), revertStreakDayForSession(session)]); await syncSessionDelete(id); mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== id) })) },
     })
   }
-
   async function deleteSelectedSessions() {
     const targets = Array.from(selectedSessionIds)
       .map(id => data.sessions.find(s => s.id === id))
       .filter((s): s is Session => !!s)
-    // DB delete in parallel, then bookkeeping in parallel
     await Promise.all(targets.map(s => db.sessions.delete(s.id)))
     for (const s of targets) syncSessionDelete(s.id)
     await Promise.all(
       targets.flatMap(s => [revertRoutineLogsForSession(s), revertStreakDayForSession(s)])
     )
     setSelectedSessionIds(new Set()); setSelectionMode(false)
-    await loadData()
+    mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => !selectedSessionIds.has(s.id)) }))
   }
-
   async function batchChangeSubject() {
     if (!batchSubjectId) return
     for (const id of selectedSessionIds) {
@@ -522,11 +557,104 @@ export default function Dashboard() {
     setSelectedSessionIds(new Set()); setSelectionMode(false)
     setBatchSubjectModalOpen(false)
     setBatchSubjectId('')
-    await loadData()
+    mutate(prev => ({
+      ...prev,
+      sessions: prev.sessions.map(s => selectedSessionIds.has(s.id) ? { ...s, subjectId: batchSubjectId, updatedAt: isoNow() } : s),
+    }))
+  }
+  const routineContextActions = (routine: Routine): ContextMenuItem[] => {
+    const todayDow = new Date().getDay() as DayOfWeek
+    const mins = routine.dayMinutes[todayDow] ?? 0
+    const existingLog = data.routineLogs.find(l => l.routineId === routine.id && l.date === todayStr)
+    const items: ContextMenuItem[] = []
+    if (mins > 0 && !existingLog?.completed) {
+      items.push({
+        label: 'Mark done',
+        action: () => {
+          const now = new Date()
+          const startAt = new Date(now.getTime() - mins * 60_000).toISOString()
+          const session: Session = {
+            id: sessionIdFor(startAt, routine.subjectId, mins),
+            subjectId: routine.subjectId,
+            projectId: routine.projectId ?? null,
+            routineId: routine.id,
+            startAt,
+            endAt: now.toISOString(),
+            durationMinutes: mins,
+            source: 'autoRoutine',
+            createdAt: isoNow(),
+            updatedAt: isoNow(),
+          }
+          const logId = existingLog?.id ?? uuid()
+          const log: RoutineLog = {
+            id: logId,
+            routineId: routine.id,
+            date: todayStr,
+            actualMinutes: mins,
+            completed: true,
+            createdAt: existingLog?.createdAt ?? isoNow(),
+          }
+          mutate(prev => ({
+            ...prev,
+            sessions: [...prev.sessions, session],
+            routineLogs: existingLog
+              ? prev.routineLogs.map(l => l.id === logId ? log : l)
+              : [...prev.routineLogs, log],
+          }))
+          void db.sessions.put(session).catch(err => console.error('Failed to save session:', err))
+          void db.routineLogs.put(log).catch(err => console.error('Failed to save routine log:', err))
+          const subjectName = data.subjects.find(s => s.id === routine.subjectId)?.name ?? 'Unknown'
+          syncSession(session, subjectName)
+          void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+          void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
+          push({
+            description: `Logged ${mins}m for ${routine.name}`,
+            undo: async () => {
+              await db.sessions.delete(session.id)
+              if (!existingLog) await db.routineLogs.delete(logId)
+              await loadData()
+            },
+            redo: async () => {
+              await db.sessions.put(session)
+              await db.routineLogs.put(log)
+              await loadData()
+            },
+          })
+        },
+      })
+    }
+    if (!existingLog) {
+      items.push({
+        label: 'Skip today',
+        action: () => {
+          const log: RoutineLog = {
+            id: uuid(),
+            routineId: routine.id,
+            date: todayStr,
+            actualMinutes: 0,
+            completed: false,
+            createdAt: isoNow(),
+          }
+          mutate(prev => ({ ...prev, routineLogs: [...prev.routineLogs, log] }))
+          void db.routineLogs.add(log).catch(err => console.error('Failed to save routine log:', err))
+          push({
+            description: `Skipped ${routine.name}`,
+            undo: async () => { await db.routineLogs.delete(log.id); await loadData() },
+            redo: async () => { await db.routineLogs.add(log); await loadData() },
+          })
+        },
+      })
+    }
+    items.push({
+      label: 'Manage routines',
+      action: () => navigate('/routines'),
+    })
+    return items
   }
   const toggleWidget = (id: string) => {
     if (visibleWidgets.includes(id)) {
       setVisibleWidgets(visibleWidgets.filter((w) => w !== id))
+      runCascade()
     } else {
       // Insert at the original position from DASHBOARD_WIDGETS_METADATA so
       // the widget returns to its natural slot after being toggled off/on.
@@ -539,6 +667,9 @@ export default function Dashboard() {
       if (insertAt === -1) next.push(id)
       else next.splice(insertAt, 0, id)
       setVisibleWidgets(next)
+      // Re-run the cascade so the re-added widget settles into a free slot
+      // instead of overlapping widgets that fell up into its old position.
+      runCascade()
     }
   }
 
@@ -599,6 +730,7 @@ export default function Dashboard() {
   function removeWidgetWithUndo(id: string) {
     const previousIndex = visibleWidgets.indexOf(id)
     setVisibleWidgets(prev => prev.filter(w => w !== id))
+    runCascade()
     const label = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id
     push({
       description: `Removed ${label} widget`,
@@ -684,6 +816,7 @@ export default function Dashboard() {
                         todayStr={todayStr}
                         todayDow={new Date().getDay() as DayOfWeek}
                         maxItems={5}
+                        onContextActions={routineContextActions}
                       />
                     </div>
                   )
@@ -733,6 +866,8 @@ export default function Dashboard() {
             </div>
           </Card>
         )
+      case 'today-checklist':
+        return <TodayChecklist />
       case 'study-streak': {
         const nextMilestone = STREAK_MILESTONES.find(m => m > streak) ?? streak
         const progressPercent = Math.min(100, Math.round((streak / nextMilestone) * 100))
@@ -788,7 +923,11 @@ export default function Dashboard() {
               </div>
             </div>
             {streak === 0 && <p className="text-sm text-slate-500">Log a session today to start your streak!</p>}
-            {streak > 0 && todayMinutes === 0 && <p className="text-xs font-medium text-amber-600 dark:text-amber-400">Log today to keep your streak!</p>}
+            {streak > 0 && todayMinutes === 0 && (
+              <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                Log today to keep your streak — one missed day is forgiven
+              </p>
+            )}
             <div>
               <div className="mb-1 grid grid-cols-7 gap-px text-[10px] font-medium text-slate-400">
                 {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((l, i) => (
@@ -1176,18 +1315,18 @@ export default function Dashboard() {
                     <div className="flex shrink-0 gap-2">
                       <Button variant="primary" size="sm" onClick={async () => {
                         const now = isoNow()
-                        if (activity.subjectId) {
+                        if (activity.subjectId && dayMinutes > 0) {
                           const session: Session = {
-                            id: uuid(),
+                            id: sessionIdFor(now, activity.subjectId, dayMinutes),
                             subjectId: activity.subjectId,
                             startAt: now,
                             endAt: now,
                             durationMinutes: dayMinutes,
-                            source: 'manual',
+                            source: 'autoRoutine',
                             createdAt: now,
                             updatedAt: now,
                           }
-                          await db.sessions.add(session)
+                          await db.sessions.put(session)
                           await updateRoutineLogsForSession(session)
                           await updateStreakDayForSession(session)
                         }
@@ -1200,7 +1339,7 @@ export default function Dashboard() {
                           createdAt: now,
                         }
                         await db.activityLogs.add(logEntry)
-                        await loadData()
+                        mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, logEntry] }))
                       }}>Yes, logged</Button>
                       <Button variant="secondary" size="sm" onClick={async () => {
                         const now = isoNow()
@@ -1212,7 +1351,7 @@ export default function Dashboard() {
                           createdAt: now,
                         }
                         await db.activityLogs.add(logEntry)
-                        await loadData()
+                        mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, logEntry] }))
                       }}>No, skip</Button>
                     </div>
                   </div>
@@ -1254,7 +1393,7 @@ export default function Dashboard() {
                             variant="secondary"
                             onClick={async () => {
                               await db.sessions.delete(session.id)
-                              await loadData()
+                              mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== session.id) }))
                             }}
                           >
                             Skip
@@ -1264,7 +1403,7 @@ export default function Dashboard() {
                             variant="primary"
                             onClick={async () => {
                               await db.sessions.update(session.id, { deletedAt: null, updatedAt: isoNow() })
-                              await loadData()
+                              mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === session.id ? { ...s, deletedAt: null, updatedAt: isoNow() } : s) }))
                             }}
                           >
                             Confirm
@@ -1320,7 +1459,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div data-tour="dashboard" className="space-y-6">
+    <div data-tour="dashboard" className="space-y-6 overflow-x-hidden">
       <div className="flex items-center gap-2">
         <div
           role="tablist"
@@ -1347,9 +1486,8 @@ export default function Dashboard() {
             type="button"
             role="tab"
             aria-selected={layoutMode === 'freeform'}
-            onClick={() => setMode('freeform')}
+            onClick={() => setMode('freeform', freeformWidth)}
             className={cn(
-              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
               layoutMode === 'freeform'
                 ? 'bg-primary-600 text-white shadow-sm'
                 : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
@@ -1383,7 +1521,7 @@ export default function Dashboard() {
       >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 auto-rows-auto">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
@@ -1407,7 +1545,18 @@ export default function Dashboard() {
             </div>
           </SortableContext>
         ) : (
-          <div ref={containerRef} data-tour="freeform-area" className="relative w-full min-h-[600px] bg-slate-50 dark:bg-slate-900 rounded-lg border border-dashed border-slate-300 dark:border-slate-700">
+          <div ref={containerRef} data-tour="freeform-area" className="relative w-full overflow-x-hidden bg-slate-50 dark:bg-slate-900 rounded-lg"
+            style={{ minHeight: 600, height: (() => {
+              // Auto-grow the container so it always contains every widget.
+              let maxY = 0
+              for (const wid of visibleWidgets) {
+                const c = widgetConfigs[wid] ?? {}
+                const d = DEFAULT_FREEFORM_SIZE[wid] ?? { width: 360, height: 280 }
+                maxY = Math.max(maxY, (c.y ?? 0) + (c.height ?? d.height))
+              }
+              return Math.max(600, maxY + 24)
+            })() }}
+          >
             {visibleWidgets.map(id => {
               const config = widgetConfigs[id] ?? {}
               const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
@@ -1417,8 +1566,6 @@ export default function Dashboard() {
               const h = config.height ?? defaults.height
               const x = config.x ?? 0
               const y = config.y ?? 0
-              // Track live drag offset (from drag start) so updates don't depend
-              // on committed x/y. Committed position is updated on pointer-up.
               return (
                 <div
                   key={id}
@@ -1430,10 +1577,68 @@ export default function Dashboard() {
                     label={label}
                     width={w}
                     height={h}
-                    initialX={x}
-                    initialY={y}
-                    onResize={(size) => setWidgetPx(id, size)}
-                    onCommit={(pos) => setWidgetPx(id, pos)}
+                    onDragStart={() => {
+                      // Snapshot every widget's position so Ctrl+Z undoes the
+                      // entire cascade, not just the dragged widget.
+                      const snapshot: Record<string, { x?: number; y?: number; width?: number; height?: number }> = {}
+                      for (const wid of visibleWidgets) {
+                        const wc = widgetConfigs[wid] ?? {}
+                        snapshot[wid] = { ...wc }
+                      }
+                      dragOriginRef.current = { id, snapshot: snapshot[id] ?? {} }
+                      widgetConfigsSnapshotRef.current = snapshot
+                    }}
+                    onDragPreview={() => {
+                      // No-op: FreeformWidget applies its own transform via ref.
+                    }}
+                    onResize={(size) => {
+                      widgetConfigsSnapshotRef.current ??= { id: { ...config } }
+                      setWidgetPx(id, size, true)
+                    }}
+                    onResizeEnd={() => {
+                      // Commit the resize via cascade so overlapping widgets
+                      // fall up around the newly sized widget.
+                      runCascade(id)
+                    }}
+                    onCommit={(pos) => {
+                      const origin = dragOriginRef.current
+                      const fullSnapshot = widgetConfigsSnapshotRef.current
+                      dragOriginRef.current = null
+                      widgetConfigsSnapshotRef.current = null
+                      // Commit the widget's top-left position, then cascade
+                      // with this widget pinned so others fall up around it.
+                      setWidgetConfigs((prev) => {
+                        const cur = prev[id] ?? {}
+                        return { ...prev, [id]: { ...cur, x: pos.x, y: pos.y } }
+                      })
+                      runCascade(id)
+                      if (origin && origin.id === id && fullSnapshot) {
+                        const before = origin.snapshot
+                        const moved = pos.x !== (before.x ?? 0) || pos.y !== (before.y ?? 0) ||
+                                      w !== (before.width ?? defaults.width) || h !== (before.height ?? defaults.height)
+                        if (moved) {
+                          push({
+                            description: `Moved ${label}`,
+                            undo: async () => {
+                              // Restore every widget to its pre-drag position
+                              // (this also undoes the cascade movement).
+                              setWidgetConfigs((prev) => {
+                                const next = { ...prev }
+                                for (const wid of visibleWidgets) {
+                                  const snap = fullSnapshot[wid]
+                                  if (snap) next[wid] = { ...next[wid], ...snap }
+                                }
+                                return next
+                              })
+                            },
+                            redo: async () => {
+                              setWidgetPx(id, pos, true)
+                              runCascade(id)
+                            },
+                          })
+                        }
+                      }
+                    }}
                     onRemove={() => removeWidgetWithUndo(id)}
                   >
                     {renderWidget(id)}
@@ -1468,7 +1673,7 @@ export default function Dashboard() {
             Grid
           </button>
           <button
-            onClick={() => setMode('freeform')}
+            onClick={() => setMode('freeform', freeformWidth)}
             className={cn(
               'rounded px-2 py-1 text-xs',
               layoutMode === 'freeform'
@@ -1482,20 +1687,20 @@ export default function Dashboard() {
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
             <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {visibleWidgets.map((id) => {
-                const w = DASHBOARD_WIDGETS_METADATA.find((m) => m.id === id)
-                if (!w) return null
+              {DASHBOARD_WIDGETS_METADATA.map((w) => {
+                const isVisible = visibleWidgets.includes(w.id)
                 return (
                   <CustomizeRow
-                    key={id}
-                    id={id}
+                    key={w.id}
+                    id={w.id}
                     label={w.label}
+                    visible={isVisible}
                     layoutMode={layoutMode}
-                    cols={widgetConfigs[id]?.cols ?? 1}
-                    config={widgetConfigs[id]}
-                    onToggle={() => toggleWidget(id)}
-                    onSetSize={(c) => setWidgetSize(id, c, 1)}
-                    onSetPx={(px) => setWidgetPx(id, px)}
+                    cols={widgetConfigs[w.id]?.cols ?? 1}
+                    config={widgetConfigs[w.id]}
+                    onToggle={() => toggleWidget(w.id)}
+                    onSetSize={(c) => setWidgetSize(w.id, c, 1)}
+                    onSetPx={(px) => setWidgetPx(w.id, px)}
                   />
                 )
               })}
@@ -1733,8 +1938,7 @@ export default function Dashboard() {
             note: updates.note,
             updatedAt: isoNow(),
           })
-          await loadData()
-          setViewSession({ ...viewSession, ...updates })
+          mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === viewSession.id ? { ...s, subjectId: updates.subjectId, startAt: updates.startAt, endAt: updates.endAt, durationMinutes: updates.durationMinutes, focusTag: updates.focusTag ?? undefined, note: updates.note, updatedAt: isoNow() } : s) }))
         }}
         subjectName={viewSession ? data.subjects.find((s) => s.id === viewSession.subjectId)?.name : undefined}
         projectName={viewSession?.projectId ? data.projects.find((p) => p.id === viewSession.projectId)?.name : undefined}
