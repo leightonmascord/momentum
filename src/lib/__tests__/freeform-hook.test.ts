@@ -24,15 +24,25 @@ function seedConfigs(widgets: string[], configs: Record<string, { x: number; y: 
 }
 
 describe('useDashboardWidgets — freeform cascade', () => {
-  it('initialises overlapping widgets into a cascade with no overlaps', () => {
+  it('initialises overlapping widgets into a cascade with no overlap', () => {
     seedConfigs(['a', 'b'], {
       a: { x: 0, y: 0, width: 320, height: 280, cols: 1, rows: 1, order: 0 },
       b: { x: 0, y: 0, width: 320, height: 280, cols: 1, rows: 1, order: 1 },
     })
     const { result } = renderHook(() => useDashboardWidgets())
-    const aCfg = result.current.widgetConfigs['a']!
-    const bCfg = result.current.widgetConfigs['b']!
-    expect(bCfg.y).toBeGreaterThan(aCfg.y! + (aCfg.height ?? 0) - 1)
+    const a = result.current.widgetConfigs['a']!
+    const b = result.current.widgetConfigs['b']!
+    // No overlap: a and b don't share a rectangle.
+    const aRight = a.x! + (a.width ?? 0)
+    const aBottom = a.y! + (a.height ?? 0)
+    const bRight = b.x! + (b.width ?? 0)
+    const bBottom = b.y! + (b.height ?? 0)
+    const overlapsX = !(aRight + 8 <= b.x! || bRight + 8 <= a.x!)
+    const overlapsY = !(aBottom + 8 <= b.y! || bBottom + 8 <= a.y!)
+    expect(overlapsX && overlapsY).toBe(false)
+    // 2D packing: b should be placed next to a horizontally, not forced below.
+    // Specifically b.y should equal a.y (same row) since a is processed first.
+    expect(b.y).toBe(a.y)
   })
 
   it('toggling a widget off then on does not leave it as a phantom blocker', () => {
@@ -46,7 +56,13 @@ describe('useDashboardWidgets — freeform cascade', () => {
     expect(result.current.widgetConfigs['a'].y).toBe(0)
     act(() => result.current.setVisibleWidgets(['a', 'b']))
     act(() => result.current.runCascade())
-    expect(result.current.widgetConfigs['b'].y).toBeGreaterThanOrEqual(result.current.widgetConfigs['a'].height!)
+    const a = result.current.widgetConfigs['a']!
+    const b = result.current.widgetConfigs['b']!
+    // b should pack into the freed gap (right of a) so it doesn't overlap a.
+    const aRight = a.x! + (a.width ?? 0) + 8
+    const aBottom = a.y! + (a.height ?? 0) + 8
+    const noOverlap = aRight <= b.x! || aBottom <= b.y!
+    expect(noOverlap).toBe(true)
   })
 
   it('runCascade(pinnedId) keeps the pinned widget exactly where it is', () => {
@@ -58,7 +74,15 @@ describe('useDashboardWidgets — freeform cascade', () => {
     act(() => result.current.setWidgetPx('a', { x: 0, y: 200 }, true))
     act(() => result.current.runCascade('a'))
     expect(result.current.widgetConfigs['a'].y).toBe(200)
-    expect(result.current.widgetConfigs['b'].y).toBeGreaterThanOrEqual(result.current.widgetConfigs['a'].height!)
+    const a = result.current.widgetConfigs['a']!
+    const b = result.current.widgetConfigs['b']!
+    // b should not overlap the pinned widget a.
+    const noOverlap =
+      a.x! + (a.width ?? 0) + 8 <= b.x! ||
+      b.x! + (b.width ?? 0) + 8 <= a.x! ||
+      a.y! + (a.height ?? 0) + 8 <= b.y! ||
+      b.y! + (b.height ?? 0) + 8 <= a.y!
+    expect(noOverlap).toBe(true)
   })
 
   it('ensureFreeformDefaults with containerWidth wraps to measured width', () => {

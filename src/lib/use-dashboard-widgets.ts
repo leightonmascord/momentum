@@ -143,14 +143,14 @@ export function resolveOverlaps(moved: Box, blockers: Box[]): Box {
 }
 
 /**
- * Freeform layout: every widget falls upward as far as possible.
+ * Freeform layout: every widget packs upward and leftward.
  *
  * - Only `visibleIds` are considered; removed/hidden widgets are ignored
  *   entirely so toggling one off never leaves a hole.
  * - The pinned widget (the one just dropped, if any) is placed first and
- *   treated as an immovable blocker so other widgets fall up around it.
- * - The rest are processed top-to-bottom; each is placed at the highest y
- *   that doesn't overlap any already-placed widget.
+ *   treated as an immovable blocker so other widgets pack up around it.
+ * - The rest are processed top-to-bottom; each is placed at the
+ *   highest-and-leftmost position that doesn't overlap any placed widget.
  */
 function cascadeFreeformLayout(
   configs: Record<string, Omit<WidgetConfig, 'id' | 'label'>>,
@@ -173,7 +173,11 @@ function cascadeFreeformLayout(
     next[pinned.id] = { ...next[pinned.id], x: pinned.x, y: pinned.y }
   }
 
-  // Fall the rest upward, top-to-bottom, into whatever space remains.
+  // Pack the rest into the tightest available space: sort top-to-bottom
+  // (then by order) so we fill the uppermost gaps first. Each widget is
+  // placed at the highest-and-leftmost position that does not overlap any
+  // already-placed widget — this fills both vertical AND horizontal gaps
+  // left behind by removed/moved widgets.
   const sorted = widgets
     .filter((w) => w.id !== pinnedId)
     .slice()
@@ -188,23 +192,35 @@ function cascadeFreeformLayout(
 }
 
 /**
- * Place a widget at the highest y that doesn't overlap any blocker.
- * Candidate y values are 0 and just below each blocker's bottom edge.
- * Picks the smallest (highest) valid y.
+ * Place a widget into the first gap that fits it. Candidate positions are
+ * generated from every existing widget's edges — both below (fall upward)
+ * and to the right (fill side gaps) — plus the top-left corner (0,0).
+ * We test candidates in order of increasing y (then increasing x) and pick
+ * the first that does not overlap any blocker. This yields a masonry-style
+ * packing where widgets cascade up and leftward into freed space instead of
+ * leaving empty holes.
  */
 function placeWithoutOverlap(box: Box, blockers: Box[]): Box {
-  const candidates = new Set<number>([0])
-  for (const blocker of blockers) {
-    candidates.add(Math.max(0, blocker.y + blocker.height + FREEFORM_GAP))
+  const xs = new Set<number>([0])
+  const ys = new Set<number>([0])
+  for (const b of blockers) {
+    ys.add(Math.max(0, b.y + b.height + FREEFORM_GAP))  // below the blocker
+    xs.add(Math.max(0, b.x + b.width + FREEFORM_GAP))   // right of the blocker
   }
-  for (const y of [...candidates].sort((a, b) => a - b)) {
-    const candidate = { ...box, y }
-    if (!blockers.some((b) => boxesOverlap(candidate, b))) {
-      return { ...box, y }
+  // Sort candidate positions: highest first (smallest y), then leftmost (smallest x).
+  const xList = [...xs].sort((a, b) => a - b)
+  const yList = [...ys].sort((a, b) => a - b)
+  for (const y of yList) {
+    for (const x of xList) {
+      const candidate = { ...box, x, y }
+      if (!blockers.some((b) => boxesOverlap(candidate, b))) {
+        return { ...box, x, y }
+      }
     }
   }
+  // No clean slot found — drop it below everything (keeps x).
   const maxBottom = blockers.reduce((m, b) => Math.max(m, b.y + b.height + FREEFORM_GAP), 0)
-  return { ...box, y: maxBottom }
+  return { ...box, x: box.x, y: maxBottom }
 }
 
 export function useDashboardWidgets() {
