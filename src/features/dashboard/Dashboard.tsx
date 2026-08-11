@@ -25,7 +25,7 @@ import { updateRoutineLogsForSession, revertRoutineLogsForSession, updateStreakD
 import { sessionIdFor } from '../../lib/timer-persistence'
 import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
-import type { Session, DayOfWeek, RoutineLog, Routine } from '../../domain/types'
+import type { Session, DayOfWeek, RoutineLog, Routine, Activity, ActivityLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
@@ -717,7 +717,7 @@ export default function Dashboard() {
     .filter((s) => toLocalDateString(s.startAt) === todayStr)
     .reduce((sum, s) => sum + s.durationMinutes, 0)
   const liveTotalTodayMinutes = getTotalTodayMinutes(data.sessions, data.subjects, data.categories)
-  const goalPct = Math.min(100, Math.round((todayMinutes / settings.dailyTargetMinutes) * 100))
+  const goalPct = Math.min(100, Math.round((liveTotalTodayMinutes / settings.dailyTargetMinutes) * 100))
   const allRecent = academicSessions
     .sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime())
     .slice(0, 50)
@@ -763,8 +763,8 @@ export default function Dashboard() {
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   {goalPct >= 100
-                    ? <span className="text-green-600 dark:text-green-400 font-medium">Target reached!</span>
-                    : `${formatMinutes(settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes))} left of ${formatMinutes(settings.dailyTargetMinutes)} goal`
+                    ? <span className="text-green-600 dark:text-green-400 font-medium">Target reached! (+{formatMinutes(Math.round(liveTotalTodayMinutes - settings.dailyTargetMinutes))} over)</span>
+                    : `${formatMinutes(Math.max(0, settings.dailyTargetMinutes - Math.round(liveTotalTodayMinutes)))} left of ${formatMinutes(settings.dailyTargetMinutes)} goal`
                   }
                 </div>
               </div>
@@ -1256,105 +1256,147 @@ export default function Dashboard() {
               
               const now = new Date()
               const currentTimeStr = format(now, 'HH:mm')
-              
-              const pendingActivities = data.activities.filter((a) => {
-                if (handledLogMap.has(a.id)) return false
-                const mins = a.dayMinutes[todayDow]
-                if (!mins || mins <= 0) return false
-                if (a.subjectId && sessionSubjectIds.has(a.subjectId)) return false
-                if (a.scheduledTime && a.scheduledTime > currentTimeStr) return false
-                return true
+              // All activities due today (including ones already handled) so the
+              // user can tick AND untick from the dashboard.
+              const todaysActivities = data.activities.filter((a) => {
+                if (a.dayMinutes[todayDow] && a.dayMinutes[todayDow]! > 0) return true
+                if (handledLogMap.has(a.id)) return true
+                return false
               })
-              
-              if (pendingActivities.length === 0) {
-                return <p className="text-sm text-slate-500">No pending activities today</p>
+              if (todaysActivities.length === 0) {
+                return <p className="text-sm text-slate-500">No activities today</p>
               }
-              
-              const activity = pendingActivities[0]
-              const pendingCount = pendingActivities.length
-              const dayMinutes = activity.dayMinutes[todayDow] ?? 0
-              const subject = data.subjects.find((s) => s.id === activity.subjectId)
-              
+
+              async function untickActivity(activity: Activity, existingLog: ActivityLog) {
+                await db.activityLogs.delete(existingLog.id)
+                if (existingLog.status === 'completed' && existingLog.actualMinutes && existingLog.actualMinutes > 0 && activity.subjectId) {
+                  const sessionId = sessionIdFor(existingLog.createdAt, activity.subjectId, existingLog.actualMinutes)
+                  const existingSession = data.sessions.find(s => s.id === sessionId)
+                  if (existingSession) {
+                    await db.sessions.delete(existingSession.id)
+                    await revertRoutineLogsForSession(existingSession)
+                    await revertStreakDayForSession(existingSession)
+                    syncSessionDelete(existingSession.id)
+                    mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== existingSession.id) }))
+                  }
+                }
+                mutate(prev => ({ ...prev, activityLogs: prev.activityLogs.filter(l => l.id !== existingLog.id) }))
+              }
+
               return (
-                <div className="rounded-lg border border-primary-200 bg-primary-50 p-4 dark:border-primary-800 dark:bg-primary-900/20">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="h-3 w-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: activity.color }}
-                        />
-                        <p className="text-sm font-medium text-primary-800 dark:text-primary-200">
-                          {activity.name}
-                        </p>
+                <div className="space-y-2">
+                  {todaysActivities.map((activity) => {
+                    const dayMinutes = activity.dayMinutes[todayDow] ?? 0
+                    const subject = data.subjects.find((s) => s.id === activity.subjectId)
+                    const existingLog = data.activityLogs.find(l => l.activityId === activity.id && l.date === todayStr)
+                    const isHandled = existingLog && (existingLog.status === 'completed' || existingLog.status === 'skipped')
+                    const isPastScheduled = !!activity.scheduledTime && activity.scheduledTime > currentTimeStr
+                    return (
+                      <div key={activity.id}
+                        className={cn(
+                          'rounded-lg border p-3',
+                          isHandled
+                            ? 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40'
+                            : 'border-primary-200 bg-primary-50 dark:border-primary-800 dark:bg-primary-900/20',
+                        )}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: activity.color }} />
+                              <p className={cn('text-sm font-medium',
+                                isHandled ? 'text-slate-500 dark:text-slate-400 line-through' : 'text-primary-800 dark:text-primary-200',
+                              )}>
+                                {activity.name}
+                              </p>
+                            </div>
+                            <div className="mt-1.5 flex flex-wrap gap-1 text-[11px]">
+                              {subject && (
+                                <span className="rounded-full border border-primary-300 bg-white px-2 py-0.5 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                                  {data.subjects.find(s => s.id === activity.subjectId)?.name ?? 'Unknown'}
+                                </span>
+                              )}
+                              {activity.scheduledTime && (
+                                <span className="rounded-full border border-primary-300 bg-white px-2 py-0.5 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                                  {activity.scheduledTime}
+                                </span>
+                              )}
+                              <span className="rounded-full border px-2 py-0.5" style={{ borderColor: activity.color, color: activity.color }}>
+                                {dayMinutes} min
+                              </span>
+                            </div>
+                            {activity.notes && (
+                              <p className="mt-1.5 text-xs text-primary-600 dark:text-primary-400 italic">{activity.notes}</p>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 flex-col items-stretch gap-1">
+                            {existingLog?.status === 'completed' && (
+                              <>
+                                <span className="text-[10px] font-medium text-green-600 dark:text-green-400 text-center">Logged</span>
+                                <Button variant="secondary" size="sm" onClick={() => untickActivity(activity, existingLog)}>Undo</Button>
+                              </>
+                            )}
+                            {existingLog?.status === 'skipped' && (
+                              <>
+                                <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 text-center">Skipped</span>
+                                <Button variant="secondary" size="sm" onClick={() => untickActivity(activity, existingLog)}>Undo</Button>
+                              </>
+                            )}
+                            {!existingLog && !isPastScheduled && dayMinutes > 0 && (
+                              <>
+                                <Button variant="primary" size="sm" onClick={async () => {
+                                  const now = isoNow()
+                                  let session: Session | null = null
+                                  if (activity.subjectId) {
+                                    session = {
+                                      id: sessionIdFor(now, activity.subjectId, dayMinutes),
+                                      subjectId: activity.subjectId,
+                                      startAt: now,
+                                      endAt: now,
+                                      durationMinutes: dayMinutes,
+                                      source: 'autoRoutine',
+                                      createdAt: now,
+                                      updatedAt: now,
+                                    }
+                                    await db.sessions.put(session)
+                                    await updateRoutineLogsForSession(session)
+                                    await updateStreakDayForSession(session)
+                                  }
+                                  const logEntry: ActivityLog = {
+                                    id: uuid(),
+                                    activityId: activity.id,
+                                    date: todayStr,
+                                    status: 'completed',
+                                    actualMinutes: dayMinutes,
+                                    createdAt: now,
+                                  }
+                                  await db.activityLogs.add(logEntry)
+                                  const subjectName = data.subjects.find(s => s.id === activity.subjectId)?.name ?? 'Unknown'
+                                  if (session) syncSession(session, subjectName)
+                                  mutate(prev => ({
+                                    ...prev,
+                                    sessions: session ? [...prev.sessions, session] : prev.sessions,
+                                    activityLogs: [...prev.activityLogs, logEntry],
+                                  }))
+                                }}>Yes, logged</Button>
+                                <Button variant="secondary" size="sm" onClick={async () => {
+                                  const now = isoNow()
+                                  const logEntry: ActivityLog = {
+                                    id: uuid(),
+                                    activityId: activity.id,
+                                    date: todayStr,
+                                    status: 'skipped',
+                                    createdAt: now,
+                                  }
+                                  await db.activityLogs.add(logEntry)
+                                  mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, logEntry] }))
+                                }}>No, skip</Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt-1.5 flex flex-wrap gap-1 text-[11px]">
-                        {subject && (
-                          <span className="rounded-full border border-primary-300 bg-white px-2 py-0.5 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
-                            {data.subjects.find(s => s.id === activity.subjectId)?.name ?? 'Unknown'}
-                          </span>
-                        )}
-                        {activity.scheduledTime && (
-                          <span className="rounded-full border border-primary-300 bg-white px-2 py-0.5 text-primary-700 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
-                            {activity.scheduledTime}
-                          </span>
-                        )}
-                        <span className="rounded-full border px-2 py-0.5" style={{ borderColor: activity.color, color: activity.color }}>
-                          {dayMinutes} min
-                        </span>
-                      </div>
-                      {activity.notes && (
-                        <p className="mt-1.5 text-xs text-primary-600 dark:text-primary-400 italic">{activity.notes}</p>
-                      )}
-                      {pendingCount > 1 && (
-                        <p className="mt-0.5 text-xs text-primary-600 dark:text-primary-400">
-                          {pendingCount - 1} more pending
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 gap-2">
-                      <Button variant="primary" size="sm" onClick={async () => {
-                        const now = isoNow()
-                        if (activity.subjectId && dayMinutes > 0) {
-                          const session: Session = {
-                            id: sessionIdFor(now, activity.subjectId, dayMinutes),
-                            subjectId: activity.subjectId,
-                            startAt: now,
-                            endAt: now,
-                            durationMinutes: dayMinutes,
-                            source: 'autoRoutine',
-                            createdAt: now,
-                            updatedAt: now,
-                          }
-                          await db.sessions.put(session)
-                          await updateRoutineLogsForSession(session)
-                          await updateStreakDayForSession(session)
-                        }
-                        const logEntry = {
-                          id: uuid(),
-                          activityId: activity.id,
-                          date: todayStr,
-                          status: 'completed' as const,
-                          actualMinutes: dayMinutes,
-                          createdAt: now,
-                        }
-                        await db.activityLogs.add(logEntry)
-                        mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, logEntry] }))
-                      }}>Yes, logged</Button>
-                      <Button variant="secondary" size="sm" onClick={async () => {
-                        const now = isoNow()
-                        const logEntry = {
-                          id: uuid(),
-                          activityId: activity.id,
-                          date: todayStr,
-                          status: 'skipped' as const,
-                          createdAt: now,
-                        }
-                        await db.activityLogs.add(logEntry)
-                        mutate(prev => ({ ...prev, activityLogs: [...prev.activityLogs, logEntry] }))
-                      }}>No, skip</Button>
-                    </div>
-                  </div>
+                    )
+                  })}
                 </div>
               )
             })()}
@@ -1569,7 +1611,7 @@ export default function Dashboard() {
               return (
                 <div
                   key={id}
-                  className="absolute"
+                  className="absolute rounded-lg overflow-hidden"
                   style={{ left: x, top: y, width: w, height: h }}
                 >
                   <FreeformWidget

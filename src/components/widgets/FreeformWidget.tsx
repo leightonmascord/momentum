@@ -54,12 +54,21 @@ export function FreeformWidget({
   // Track the pointer's container-relative position at grab so we can
   // compute `newTopLeft = originalTopLeft + (currentPointer - grabPointer)`
   // and preserve the user's grab offset instead of snapping top-left.
+  // The container's bounding rect is captured ONCE at grab time so that
+  // mid-drag reflows (e.g. a ResizeObserver firing setState in the parent
+  // Dashboard, or the auto-grown container height shifting) do not cause
+  // the widget to teleport. Without this freeze, `r.container.getBoundingClientRect()`
+  // returns a different value on each pointermove and the dx/dy math
+  // explodes.
   const dragRef = useRef<{
     grabPointerX: number
     grabPointerY: number
     widgetBaseX: number
     widgetBaseY: number
-    container: HTMLElement
+    containerLeft: number
+    containerTop: number
+    scrollLeft: number
+    scrollTop: number
   } | null>(null)
 
   const onHeaderPointerDown = (e: React.PointerEvent) => {
@@ -82,18 +91,26 @@ export function FreeformWidget({
     const grabPointerX = e.clientX - cRect.left + container.scrollLeft
     const grabPointerY = e.clientY - cRect.top + container.scrollTop
 
-    dragRef.current = { grabPointerX, grabPointerY, widgetBaseX, widgetBaseY, container }
+    dragRef.current = {
+      grabPointerX,
+      grabPointerY,
+      widgetBaseX,
+      widgetBaseY,
+      containerLeft: cRect.left,
+      containerTop: cRect.top,
+      scrollLeft: container.scrollLeft,
+      scrollTop: container.scrollTop,
+    }
     onDragStart?.()
 
     const onMove = (ev: PointerEvent) => {
       const r = dragRef.current
       if (!r) return
-      const cr = r.container.getBoundingClientRect()
-      const currentPointerX = ev.clientX - cr.left + r.container.scrollLeft
-      const currentPointerY = ev.clientY - cr.top + r.container.scrollTop
+      // Use the FROZEN container rect from grab time, not a live read.
+      const currentPointerX = ev.clientX - r.containerLeft + r.scrollLeft
+      const currentPointerY = ev.clientY - r.containerTop + r.scrollTop
       const dx = currentPointerX - r.grabPointerX
       const dy = currentPointerY - r.grabPointerY
-      // Apply transform directly to DOM — zero re-renders.
       if (rootRef.current) {
         rootRef.current.style.transform = `translate3d(${dx}px, ${dy}px, 0)`
         rootRef.current.style.transition = 'none'
@@ -105,18 +122,15 @@ export function FreeformWidget({
     const onUp = (ev: PointerEvent) => {
       const r = dragRef.current
       if (r) {
-        const cr = r.container.getBoundingClientRect()
-        const currentPointerX = ev.clientX - cr.left + r.container.scrollLeft
-        const currentPointerY = ev.clientY - cr.top + r.container.scrollTop
+        const currentPointerX = ev.clientX - r.containerLeft + r.scrollLeft
+        const currentPointerY = ev.clientY - r.containerTop + r.scrollTop
         const dx = currentPointerX - r.grabPointerX
         const dy = currentPointerY - r.grabPointerY
-        // Clear the direct-manipulation transform.
         if (rootRef.current) {
           rootRef.current.style.transform = ''
           rootRef.current.style.transition = ''
           rootRef.current.style.zIndex = ''
         }
-        // Commit the widget's top-left (original + delta), not the pointer pos.
         onCommit?.({ x: Math.max(0, r.widgetBaseX + dx), y: Math.max(0, r.widgetBaseY + dy) })
       }
       dragRef.current = null

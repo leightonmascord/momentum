@@ -9,11 +9,16 @@ export default defineConfig(({ command }) => ({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
       workbox: {
         navigateFallback: 'index.html',
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
       },
       includeAssets: ['favicon.svg'],
+
       manifest: {
         name: 'Momentum — Study Tracker',
         short_name: 'Momentum',

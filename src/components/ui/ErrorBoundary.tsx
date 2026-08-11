@@ -14,7 +14,25 @@ interface ErrorBoundaryProps {
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false, error: null }
   static getDerivedStateFromError(error: Error): ErrorBoundaryState { return { hasError: true, error } }
-  componentDidCatch(error: Error) { console.error('App Crashed:', error) }
+  componentDidCatch(error: Error) {
+    console.error('App Crashed:', error)
+    // A stale service worker (from a previous deploy) served a hashed
+    // chunk URL that no longer exists on the server (e.g.
+    // SchedulePage-<old-hash>.js). Retrying the same import can never
+    // succeed — the chunk is gone. A hard reload fetches the fresh
+    // index.html, activates the new service worker (skipWaiting), and
+    // loads the current chunk hashes. Guard with sessionStorage to
+    // prevent a reload loop if the new build is also broken.
+    const isChunkError =
+      error instanceof TypeError &&
+      /Failed to fetch dynamically imported module|Importing a module script failed|dynamically imported/i.test(error.message)
+    if (isChunkError && !sessionStorage.getItem('momentum-reloaded-on-chunk-error')) {
+      sessionStorage.setItem('momentum-reloaded-on-chunk-error', '1')
+      window.location.reload()
+    } else {
+      sessionStorage.removeItem('momentum-reloaded-on-chunk-error')
+    }
+  }
   componentDidUpdate(prevProps: ErrorBoundaryProps) {
     if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
       this.setState({ hasError: false, error: null })
