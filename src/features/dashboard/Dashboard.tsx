@@ -16,6 +16,7 @@ import { NumberInput } from '../../components/ui/NumberInput'
 import { Modal } from '../../components/ui/Modal'
 import { HoverCard } from '../../components/ui/HoverCard'
 import { ContextMenu, type ContextMenuItem } from '../../components/ui/ContextMenu'
+import { Collapsible } from '../../components/ui/Collapsible'
 import { useSwipe } from '../../lib/use-swipe'
 import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString, STREAK_MILESTONES } from '../../lib/utils'
 import { loadSettings } from '../../lib/settings-store'
@@ -377,9 +378,21 @@ export default function Dashboard() {
   const [logTaskId, setLogTaskId] = useState(persistedForm?.taskId ?? '')
   const [logDuration, setLogDuration] = useState(persistedForm?.duration ?? 30)
   const [logDate, setLogDate] = useState(persistedForm?.date ?? todayStr)
-  const [logTime, setLogTime] = useState(persistedForm?.time ?? '')
+  const [logStartTime, setLogStartTime] = useState(persistedForm?.time ?? '')
+  const [logEndTime, setLogEndTime] = useState('')
   const [logNote, setLogNote] = useState(persistedForm?.note ?? '')
   const [logFocusTag, setLogFocusTag] = useState<Session['focusTag'] | null>(persistedForm?.focusTag ?? null)
+  // Auto-calculate duration from start/end when both are set
+  useEffect(() => {
+    if (logStartTime && logEndTime && logStartTime !== logEndTime) {
+      const [sh, sm] = logStartTime.split(':').map(Number)
+      const [eh, em] = logEndTime.split(':').map(Number)
+      const startMs = (sh ?? 0) * 3600 + (sm ?? 0) * 60
+      const endMs = (eh ?? 0) * 3600 + (em ?? 0) * 60
+      const diff = endMs - startMs
+      if (diff > 0) setLogDuration(Math.max(1, Math.round(diff / 60)))
+    }
+  }, [logStartTime, logEndTime])
 
   // (Removed: persistent sessionStorage sync of the form state on every keystroke.
   // It was forcing a re-render of all consumers (and a full IndexedDB re-fetch) on
@@ -426,11 +439,14 @@ export default function Dashboard() {
       const note = logNote.trim()
       const [y, m, d] = logDate.split('-').map(Number)
       let startAt: string, endAt: string, noTime = false
-      if (logTime) {
-        const [h, mm] = logTime.split(':').map(Number)
+      if (logStartTime) {
+        const [h, mm] = logStartTime.split(':').map(Number)
         const start = new Date(y, m - 1, d, h, mm, 0, 0)
+        const end = logEndTime
+          ? new Date(y, m - 1, d, ...(logEndTime.split(':').map(Number) as [number, number]))
+          : new Date(start.getTime() + logDuration * 60_000)
         startAt = start.toISOString()
-        endAt = new Date(start.getTime() + logDuration * 60_000).toISOString()
+        endAt = end.toISOString()
       } else {
         startAt = new Date(y, m - 1, d, 12, 0, 0, 0).toISOString()
         endAt = new Date(y, m - 1, d, 12, logDuration, 0, 0).toISOString()
@@ -475,7 +491,7 @@ export default function Dashboard() {
         redo: async () => { await db.sessions.put(session); await updateStreakDayForSession(session); mutate(prev => ({ ...prev, sessions: [...prev.sessions, session] })) },
       })
       sessionStorage.removeItem(LOG_FORM_KEY)
-      setLogSubjectId(''); setLogProjectId(''); setLogTaskId(''); setLogTime(''); setLogNote(''); setLogFocusTag(null)
+      setLogSubjectId(''); setLogProjectId(''); setLogTaskId(''); setLogStartTime(''); setLogEndTime(''); setLogNote(''); setLogFocusTag(null)
     } finally {
       loggingRef.current = false
     }
@@ -934,9 +950,16 @@ export default function Dashboard() {
             {streak === 0 && <p className="text-sm text-slate-500">Log a session today to start your streak!</p>}
             {streak > 0 && todayMinutes === 0 && (
               <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-                Log today to keep your streak — one missed day is forgiven
+                Log today to keep your streak — one missed day is forgiven per chain.
+                If you miss two days in a row, the chain breaks.
               </p>
             )}
+            <p
+              className="text-[10px] text-slate-500 cursor-help"
+              title="How streaks work: count one per consecutive day. One missed day per chain is allowed — the next logged day after that continues the streak. Two consecutive missed days break the chain. Daily target is the bar set in Settings → Timer."
+            >
+              ⓘ One missed day per chain is allowed — log the next day to continue.
+            </p>
             <div>
               <div className="mb-1 grid grid-cols-7 gap-px text-[10px] font-medium text-slate-400">
                 {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((l, i) => (
@@ -1420,60 +1443,59 @@ export default function Dashboard() {
         return (
           <div className="space-y-3 p-2">
             {(() => {
-              // Only show sessions created within the last 48h as "pending
-              // confirmation". Older soft-deleted autoRoutine sessions are from
-              // stale deletes and should not clutter the widget.
-              const cutoff = Date.now() - 48 * 60 * 60 * 1000
-              const pendingSessions = data.sessions.filter(
-                s => s.source === 'autoRoutine' && s.deletedAt && new Date(s.createdAt).getTime() > cutoff
+              // Today's pending sessions (not confirmed/skipped) shown at top.
+              // Older ones go under a collapsible section, auto-closed (M7 fix).
+              const now = Date.now()
+              const todayStr = format(new Date(), 'yyyy-MM-dd')
+              const allPending = data.sessions.filter(
+                s => s.source === 'autoRoutine' && s.deletedAt && (now - new Date(s.createdAt).getTime()) < 7 * 86400000
               )
-              if (pendingSessions.length === 0) {
+              const todayPending = allPending.filter(s => format(new Date(s.createdAt), 'yyyy-MM-dd') === todayStr)
+              const olderPending = allPending.filter(s => format(new Date(s.createdAt), 'yyyy-MM-dd') !== todayStr)
+
+              if (allPending.length === 0) {
                 return <p className="text-sm text-slate-500 p-4">No pending auto-logged sessions</p>
               }
-              return (
-                <>
-                  {pendingSessions.map(session => {
-                    const subject = data.subjects.find(s => s.id === session.subjectId)
-                    const project = session.projectId ? data.projects.find(p => p.id === session.projectId) : undefined
-                    return (
-                      <div key={session.id} className="flex items-center justify-between p-2 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800">
-                        <div className="flex min-w-0 items-center gap-2">
-                          {subject && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: subject.color }} />}
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
-                              {subject?.name ?? 'Unknown Subject'}
-                              {project && <span className="text-slate-500"> · {project.name}</span>}
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {format(new Date(session.startAt), 'h:mm a')} • {formatMinutes(session.durationMinutes)}
-                            </div>
-                          </div>
+
+              function renderSession(session: typeof data.sessions[0]) {
+                const subject = data.subjects.find(s => s.id === session.subjectId)
+                const project = session.projectId ? data.projects.find(p => p.id === session.projectId) : undefined
+                return (
+                  <div key={session.id} className="flex items-center justify-between p-2 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {subject && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: subject.color }} />}
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                          {subject?.name ?? 'Unknown Subject'}
+                          {project && <span className="text-slate-500"> · {project.name}</span>}
                         </div>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={async () => {
-                              await db.sessions.delete(session.id)
-                              mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== session.id) }))
-                            }}
-                          >
-                            Skip
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            onClick={async () => {
-                              await db.sessions.update(session.id, { deletedAt: null, updatedAt: isoNow() })
-                              mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === session.id ? { ...s, deletedAt: null, updatedAt: isoNow() } : s) }))
-                            }}
-                          >
-                            Confirm
-                          </Button>
+                        <div className="text-xs text-slate-500">
+                          {format(new Date(session.startAt), 'h:mm a')} • {formatMinutes(session.durationMinutes)}
                         </div>
                       </div>
-                    )
-                  })}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={async () => {
+                        await db.sessions.delete(session.id)
+                        mutate(prev => ({ ...prev, sessions: prev.sessions.filter(s => s.id !== session.id) }))
+                      }}>Skip</Button>
+                      <Button size="sm" variant="primary" onClick={async () => {
+                        await db.sessions.update(session.id, { deletedAt: null, updatedAt: isoNow() })
+                        mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === session.id ? { ...s, deletedAt: null, updatedAt: isoNow() } : s) }))
+                      }}>Confirm</Button>
+                    </div>
+                  </div>
+                )
+              }
+
+              return (
+                <>
+                  {todayPending.map(renderSession)}
+                  {olderPending.length > 0 && (
+                    <Collapsible id="auto-log-older" title={`Older (${olderPending.length})`} defaultOpen={false}>
+                      {olderPending.map(renderSession)}
+                    </Collapsible>
+                  )}
                 </>
               )
             })()}
@@ -1584,14 +1606,14 @@ export default function Dashboard() {
       >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 auto-rows-auto">
+            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 auto-rows-auto items-start">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
                 const label = meta?.label || id
                 const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
-                  <div key={id} className={cn(colClass, 'h-full')}>
+                  <div key={id} className={colClass}>
                     <DashboardWidget
                       id={id}
                       label={label}
@@ -1841,7 +1863,9 @@ export default function Dashboard() {
               <label className="label">Subject</label>
               <select className="input" value={logSubjectId} onChange={(e) => { const val = e.target.value; setLogSubjectId(val); setLogProjectId(''); setLogTaskId('') }}>
                 <option value="">Select subject</option>
-                {data.subjects.filter(s => !s.deletedAt).map((s) => <option key={s.id} value={s.id}>{getSubjectPathLabel(s.id, data.subjects)}</option>)}
+                {data.subjects
+                  .filter(s => !s.deletedAt && (!s.parentSubjectId || !data.subjects.find(p => p.id === s.parentSubjectId)?.deletedAt))
+                  .map((s) => <option key={s.id} value={s.id}>{getSubjectPathLabel(s.id, data.subjects)}</option>)}
               </select>
             </div>
             {logSubjectId && data.projects.filter((p) => !p.deletedAt && p.subjectId === logSubjectId).length > 0 && (
@@ -1855,17 +1879,27 @@ export default function Dashboard() {
                 </select>
               </div>
             )}
-            {logProjectId && (
+            {logSubjectId && (
               <div>
                 <label className="label">Task (optional)</label>
                 <select className="input" value={logTaskId} onChange={(e) => setLogTaskId(e.target.value)}>
                   <option value="">— Select task —</option>
-                  {data.assignments.filter((a) => a.projectId === logProjectId && !a.completed && !a.deletedAt).map((a) => (
-                    <option key={a.id} value={a.id}>{a.title}</option>
-                  ))}
+                  {data.assignments
+                    .filter((a) => !a.deletedAt && !a.completed && a.subjectId === logSubjectId && (!logProjectId || a.projectId === logProjectId))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>{a.title}</option>
+                    ))}
                 </select>
               </div>
             )}
+            <div>
+              <label className="label">Start time</label>
+              <input type="time" className="input" value={logStartTime} onChange={(e) => setLogStartTime(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">End time</label>
+              <input type="time" className="input" value={logEndTime} onChange={(e) => setLogEndTime(e.target.value)} />
+            </div>
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -1875,10 +1909,6 @@ export default function Dashboard() {
             <div>
               <label className="label">Date</label>
               <input type="date" className="input" max={todayStr} value={logDate} onChange={(e) => setLogDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="label">Time (optional)</label>
-              <input type="time" className="input" value={logTime} onChange={(e) => setLogTime(e.target.value)} />
             </div>
             <div className="flex-1">
               <label className="label">Note (optional)</label>

@@ -375,10 +375,6 @@ export default function HabitsPage() {
     await db.habits.update(id, { status: 'active', updatedAt: isoNow() })
     mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, status: 'active', updatedAt: isoNow() } : h) }))
   }
-  async function demoteToPotential(id: string) {
-    await db.habits.update(id, { status: 'potential', updatedAt: isoNow() })
-    mutate(prev => ({ ...prev, habits: prev.habits.map(h => h.id === id ? { ...h, status: 'potential', updatedAt: isoNow() } : h) }))
-  }
   async function archiveHabitFn(id: string) {
     try {
       await db.habits.update(id, { archivedAt: isoNow(), updatedAt: isoNow() })
@@ -446,15 +442,17 @@ export default function HabitsPage() {
     try {
       const logs = await db.habitLogs.where('habitId').equals(id).toArray()
       const now = isoNow()
-      for (const log of logs) {
-        await db.habitLogs.update(log.id, { deletedAt: now, updatedAt: now })
+      if (logs.length > 0) {
+        // Bulk update instead of sequential await per log — eliminates the
+        // lag that made the page feel unresponsive during reset.
+        await db.habitLogs.bulkUpdate(logs.map(l => ({ key: l.id, changes: { deletedAt: now, updatedAt: now } })))
       }
       // Clear optimistic overlays for this habit so locally-added logs don't
       // reappear after the reset.
       setLocalLogAdditions((prev) => prev.filter((l) => l.habitId !== id))
       setLocalLogDeletions((prev) => {
         const next = new Set(prev)
-        for (const l of logs) next.delete(l.id)
+        for (const l of logs) next.add(l.id)
         return next
       })
       setResetConfirm(null)
@@ -574,26 +572,20 @@ export default function HabitsPage() {
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setOpenMenuId(null); openEditHabit(habit) }}
-                >Edit</button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setOpenMenuId(null); demoteToPotential(habit.id) }}
-                >Park</button>
+                  onClick={() => { setOpenMenuId(null); setFinishConfirm(habit.id) }}
+                >Mark as Done</button>
                 <button
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
                   onClick={() => { setOpenMenuId(null); setArchiveConfirm(habit.id) }}
-                >Archive</button>
+                >Pause</button>
                 <button
                   type="button"
                   role="menuitem"
                   className="block w-full px-3 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-700"
-                  onClick={() => { setOpenMenuId(null); setFinishConfirm(habit.id) }}
-                >Mark as Done</button>
+                  onClick={() => { setOpenMenuId(null); openEditHabit(habit) }}
+                >Edit</button>
                 <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
                 <button
                   type="button"
@@ -1065,14 +1057,14 @@ export default function HabitsPage() {
         </div>
       </Modal>
 
-      <Modal open={archiveConfirm !== null} onClose={() => setArchiveConfirm(null)} title="Archive Habit?">
+      <Modal open={archiveConfirm !== null} onClose={() => setArchiveConfirm(null)} title="Pause Habit?">
         <div className="space-y-3">
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            Archive this habit? You can always restore it later from the archived list.
+            Pause this habit? It stops appearing in your active list but keeps all data. You can resume it later from the archived list.
           </p>
           <div className="flex gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => setArchiveConfirm(null)}>Cancel</Button>
-            <Button variant="primary" className="flex-1" onClick={() => archiveConfirm && archiveHabitFn(archiveConfirm)}>Archive</Button>
+            <Button variant="primary" className="flex-1" onClick={() => archiveConfirm && archiveHabitFn(archiveConfirm)}>Pause</Button>
           </div>
         </div>
       </Modal>

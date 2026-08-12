@@ -1,6 +1,6 @@
 // Compact "Today's Checklist" widget — shows today's routines and activities
 // as a single list with checkmark/skip actions. Optimistic UI updates.
-import { useMemo } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import { format } from 'date-fns'
 import { v4 as uuid } from 'uuid'
 import { useData } from '../../app/providers'
@@ -22,6 +22,9 @@ export function TodayChecklist() {
   const { syncSession } = useSessionSync()
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const todayDow = new Date().getDay() as DayOfWeek
+  // When true, checking off also creates a study session (default: false per
+  // user request — study time is typically logged via the timer).
+  const [logTime, setLogTime] = useState(false)
 
   const rows = useMemo<Row[]>(() => {
     const rlogs = data.routineLogs.filter(l => l.date === todayStr)
@@ -48,8 +51,7 @@ export function TodayChecklist() {
       return bMins - aMins
     })
   }, [data.routines, data.routineLogs, data.activities, data.activityLogs, todayStr, todayDow])
-
-  function markDone(row: Row) {
+  const markDone = useCallback((row: Row) => {
     if (row.kind === 'routine') {
       const routine = row.data
       const mins = routine.dayMinutes[todayDow] ?? 0
@@ -63,50 +65,54 @@ export function TodayChecklist() {
         completed: true,
         createdAt: row.log?.createdAt ?? isoNow(),
       }
-      const now = new Date()
-      const startAt = new Date(now.getTime() - mins * 60_000).toISOString()
-      const session: Session = {
-        id: sessionIdFor(startAt, routine.subjectId, mins),
-        subjectId: routine.subjectId,
-        projectId: routine.projectId ?? null,
-        routineId: routine.id,
-        startAt,
-        endAt: now.toISOString(),
-        durationMinutes: mins,
-        source: 'autoRoutine',
-        createdAt: isoNow(),
-        updatedAt: isoNow(),
-      }
+      // Only create a session when "Log time" is enabled — by default,
+      // checking off just records the completion, not study minutes.
+      const session: Session | null = logTime && routine.subjectId && mins > 0
+        ? {
+            id: sessionIdFor(new Date(Date.now() - mins * 60_000).toISOString(), routine.subjectId, mins),
+            subjectId: routine.subjectId,
+            projectId: routine.projectId ?? null,
+            routineId: routine.id,
+            startAt: new Date(Date.now() - mins * 60_000).toISOString(),
+            endAt: new Date().toISOString(),
+            durationMinutes: mins,
+            source: 'autoRoutine',
+            createdAt: isoNow(),
+            updatedAt: isoNow(),
+          }
+        : null
       mutate(prev => ({
         ...prev,
-        sessions: [...prev.sessions, session],
+        ...(session ? { sessions: [...prev.sessions, session] } : {}),
         routineLogs: row.log
           ? prev.routineLogs.map(l => l.id === logId ? log : l)
           : [...prev.routineLogs, log],
       }))
-      void db.sessions.put(session).catch(err => console.error('Failed to save session:', err))
       void db.routineLogs.put(log).catch(err => console.error('Failed to save routine log:', err))
-      const subjectName = data.subjects.find(s => s.id === routine.subjectId)?.name ?? 'Unknown'
-      syncSession(session, subjectName)
-      void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
-      void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
+      if (session) {
+        void db.sessions.put(session).catch(err => console.error('Failed to save session:', err))
+        const subjectName = data.subjects.find(s => s.id === routine.subjectId)?.name ?? 'Unknown'
+        syncSession(session, subjectName)
+        void updateRoutineLogsForSession(session).catch(err => console.error('Failed to update routine logs:', err))
+        void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
+      }
       push({
-        description: `Logged ${mins}m for ${routine.name}`,
+        description: session ? `Logged ${mins}m for ${routine.name}` : `Completed ${routine.name}`,
         undo: async () => {
-          await db.sessions.delete(session.id)
+          if (session) await db.sessions.delete(session.id)
           if (!row.log) await db.routineLogs.delete(logId)
           mutate(prev => ({
             ...prev,
-            sessions: prev.sessions.filter(s => s.id !== session.id),
+            ...(session ? { sessions: prev.sessions.filter(s => s.id !== session.id) } : {}),
             routineLogs: row.log ? prev.routineLogs : prev.routineLogs.filter(l => l.id !== logId),
           }))
         },
         redo: async () => {
-          await db.sessions.put(session)
+          if (session) await db.sessions.put(session)
           await db.routineLogs.put(log)
           mutate(prev => ({
             ...prev,
-            sessions: [...prev.sessions, session],
+            ...(session ? { sessions: [...prev.sessions, session] } : {}),
             routineLogs: row.log
               ? prev.routineLogs.map(l => l.id === logId ? log : l)
               : [...prev.routineLogs, log],
@@ -117,7 +123,7 @@ export function TodayChecklist() {
       const activity = row.data
       const mins = activity.dayMinutes[todayDow] ?? activity.duration ?? 0
       const sessionStartAt = new Date(Date.now() - mins * 60_000).toISOString()
-      const session: Session | null = activity.createsSession && activity.subjectId && mins > 0
+      const session: Session | null = logTime && activity.createsSession && activity.subjectId && mins > 0
         ? {
             id: sessionIdFor(sessionStartAt, activity.subjectId, mins),
             subjectId: activity.subjectId,
@@ -153,7 +159,7 @@ export function TodayChecklist() {
         void updateStreakDayForSession(session).catch(err => console.error('Failed to update streak:', err))
       }
       push({
-        description: `Attended ${activity.name}`,
+        description: session ? `Logged ${mins}m for ${activity.name}` : `Completed ${activity.name}`,
         undo: async () => {
           await db.activityLogs.delete(log.id)
           if (session) await db.sessions.delete(session.id)
@@ -176,7 +182,7 @@ export function TodayChecklist() {
         },
       })
     }
-  }
+  }, [logTime, todayDow, todayStr, data, mutate, push, syncSession])
 
   function markSkipped(row: Row) {
     if (row.skipped || row.completed) return
@@ -328,11 +334,22 @@ export function TodayChecklist() {
         <span className="font-medium text-slate-500 dark:text-slate-400">
           {completed} / {rows.length} done
         </span>
-        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-          <div
-            className="h-full bg-primary-500 transition-all"
-            style={{ width: `${(completed / rows.length) * 100}%` }}
-          />
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={logTime}
+              onChange={(e) => setLogTime(e.target.checked)}
+              className="h-3 w-3 rounded border-slate-300 text-primary-600"
+            />
+            Log time
+          </label>
+          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+            <div
+              className="h-full bg-primary-500 transition-all"
+              style={{ width: `${(completed / rows.length) * 100}%` }}
+            />
+          </div>
         </div>
       </div>
       <ul className="flex-1 overflow-y-auto">

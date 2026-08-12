@@ -89,7 +89,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
           </button>
         </div>
       )}
-      <div className="p-4" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => { mouseDownTargetRef.current = e.target }}>{children}</div>
+      <div className="p-4">{children}</div>
     </dialog>
   )
 }

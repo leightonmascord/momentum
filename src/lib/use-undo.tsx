@@ -45,8 +45,20 @@ export function UndoProvider({ children }: { children: ReactNode }) {
 
   const push = useCallback((action: Omit<UndoAction, 'timestamp'>) => {
     // Guard against concurrent pushes — while undo/redo is executing,
-    // a new push would corrupt the stack ordering.
-    if (isPushing.current) return
+    // a new push would corrupt the stack ordering. Instead of silently
+    // dropping the action, surface a brief toast so the user knows their
+    // action wasn't recorded (M12 fix).
+    if (isPushing.current) {
+      setToast({
+        description: 'Action in progress — try again',
+        undo: async () => {},
+        redo: async () => {},
+        timestamp: Date.now(),
+      })
+      if (toastTimer.current) window.clearTimeout(toastTimer.current)
+      toastTimer.current = window.setTimeout(() => setToast(null), 2000)
+      return
+    }
     isPushing.current = true
     try {
       // Pushing a new action clears the redo stack (new branch)

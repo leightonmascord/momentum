@@ -12,7 +12,12 @@ const BEST_STREAK_KEY = 'momentum-best-streak';
  * @returns { streak: number, longestStreak: number, bestStreak: number }
  */
 export function useStreak(sessions: Session[]) {
-  // Current streak: consecutive days up to today (allowing one gap)
+  // Current streak: consecutive days up to today. One gap (missed day)
+  // is allowed per chain — the next logged day after a gap continues
+  // the streak. Two consecutive missed days break it. The `missed`
+  // counter MUST reset on a logged day, otherwise after the first gap
+  // the chain immediately breaks on any further gap (the old code left
+  // `missed` unreset, causing "1 day" then "4 days" flicker).
   const streak = useMemo(() => {
     const daySet = new Set<string>();
     for (const s of sessions) {
@@ -25,7 +30,7 @@ export function useStreak(sessions: Session[]) {
       const ds = format(d, 'yyyy-MM-dd');
       if (daySet.has(ds)) {
         count++;
-        // missed is NOT reset — one gap per chain
+        missed = 0; // Reset after a logged day so the chain can survive one more gap
         d = subDays(d, 1);
       } else {
         missed++;
@@ -36,17 +41,19 @@ export function useStreak(sessions: Session[]) {
     return count;
   }, [sessions]);
 
-  // Longest streak ever in the dataset — same one-gap-per-chain rule
+  // Longest streak ever in the dataset — uses the SAME one-gap-per-chain
+  // rule as the current streak above (L3 fix: old code incremented `cur`
+  // on a gap, inflating the longest vs current display).
   const longestStreak = useMemo(() => {
     const daySet = new Set<string>();
     for (const s of sessions) {
       daySet.add(toLocalDateString(s.startAt));
     }
     const sortedDays = Array.from(daySet).sort();
-    if (sortedDays.length <= 1) return 0;
+    if (sortedDays.length <= 1) return sortedDays.length;
     let max = 0;
     let cur = 1;
-    let chainMissed = 0;
+    let gapUsed = false;
     for (let i = 1; i < sortedDays.length; i++) {
       const diff = differenceInCalendarDays(
         new Date(sortedDays[i]),
@@ -54,22 +61,16 @@ export function useStreak(sessions: Session[]) {
       );
       if (diff === 1) {
         cur++;
-        if (cur > max) max = cur;
-        chainMissed = 0;
-      } else if (diff === 2) {
-        chainMissed++;
-        if (chainMissed > 1) {
-          if (cur > max) max = cur;
-          cur = 1;
-          chainMissed = 0;
-        } else {
-          cur++;
-          if (cur > max) max = cur;
-        }
+      } else if (diff === 2 && !gapUsed) {
+        // Allow one gap per chain — count the day after the gap but
+        // don't reset the chain. Once the gap is consumed, the next
+        // missed day breaks the chain.
+        cur++;
+        gapUsed = true;
       } else {
         if (cur > max) max = cur;
         cur = 1;
-        chainMissed = 0;
+        gapUsed = false;
       }
     }
     if (cur > max) max = cur;

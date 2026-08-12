@@ -176,13 +176,18 @@ export function FreeformWidget({
       if (rootRef.current) {
         const newW = parseFloat(rootRef.current.style.width) || width
         const newH = parseFloat(rootRef.current.style.height) || height
-        // Clear inline override so React's CSS classes take back over.
-        rootRef.current.style.width = ''
-        rootRef.current.style.height = ''
-        rootRef.current.style.transition = ''
-        rootRef.current.style.zIndex = ''
         // Commit the final size via React state (single re-render).
+        // Only clear inline overrides AFTER the state commit so there's
+        // no flash between the inline style and the CSS-class size (L9 fix).
         onResize?.({ width: newW, height: newH })
+        requestAnimationFrame(() => {
+          if (rootRef.current) {
+            rootRef.current.style.width = ''
+            rootRef.current.style.height = ''
+            rootRef.current.style.transition = ''
+            rootRef.current.style.zIndex = ''
+          }
+        })
       }
       resizeRef.current = null
       onResizeEnd?.()

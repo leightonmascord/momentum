@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button'
 import { Card, CardHeader, CardTitle } from '../../components/ui/Card'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { ColorPicker } from '../../components/ui/ColorPicker'
+import { Collapsible } from '../../components/ui/Collapsible'
 import { cn, isoNow } from '../../lib/utils'
 import { v4 as uuid } from 'uuid'
 import { useSessionSync } from '../../lib/use-session-sync'
@@ -531,49 +532,98 @@ export function SchedulePage() {
               </p>
             </Card>
           ))}
+          {todaysActivities.length > 0 && (
+            <div data-section="activities">
+              <div className="mb-2 mt-2 flex items-center gap-2">
+                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                  Activities
+                </span>
+                <span className="text-xs text-slate-500">events you attend (no study time)</span>
+              </div>
+              {todaysActivities.map(activity => (
+                <ActivityCard
+                  key={activity.id}
+                  activity={activity}
+                  subjectName={activity.subjectId ? subjectsMap.get(activity.subjectId)?.name ?? null : null}
+                  existingLog={getActivityLogForToday(activity.id)}
+                  isExpanded={expandedId === activity.id}
+                  onToggleExpand={() => setExpandedId(expandedId === activity.id ? null : activity.id)}
+                  onAttended={() => attendActivity(activity)}
+                  onSkip={() => skipActivity(activity)}
+                  onEdit={() => setActivityEditing(activity)}
+                  onUndo={() => {
+                    const log = getActivityLogForToday(activity.id)
+                    if (log) {
+                        db.activityLogs.delete(log.id).then(() => {
+                            db.sessions.where({ note: `Activity: ${activity.name}` }).delete()
+                            loadData()
+                        })
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          )}
 
-          {todaysActivities.map(activity => (
-            <ActivityCard
-              key={activity.id}
-              activity={activity}
-              subjectName={activity.subjectId ? subjectsMap.get(activity.subjectId)?.name ?? null : null}
-              existingLog={getActivityLogForToday(activity.id)}
-              isExpanded={expandedId === activity.id}
-              onToggleExpand={() => setExpandedId(expandedId === activity.id ? null : activity.id)}
-              onAttended={() => attendActivity(activity)}
-              onSkip={() => skipActivity(activity)}
-              onEdit={() => setActivityEditing(activity)}
-              onUndo={() => {
-                const log = getActivityLogForToday(activity.id)
-                if (log) {
-                    db.activityLogs.delete(log.id).then(() => {
-                        db.sessions.where({ note: `Activity: ${activity.name}` }).delete()
-                        loadData()
-                    })
-                }
-              }}
-            />
-          ))}
+          {todaysRoutines.filter(r => !getRoutineLogForToday(r.id)?.completed).length > 0 && (
+            <div data-section="study-blocks">
+              <div className="mb-2 mt-4 flex items-center gap-2">
+                <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                  Study blocks
+                </span>
+                <span className="text-xs text-slate-500">study time you log toward routines</span>
+              </div>
+              {todaysRoutines
+                .filter(r => !getRoutineLogForToday(r.id)?.completed)
+                .map(routine => (
+                  <RoutineCard
+                    key={routine.id}
+                    routine={routine}
+                    subjectName={subjectsMap.get(routine.subjectId)?.name ?? 'Unknown'}
+                    existingLog={getRoutineLogForToday(routine.id)}
+                    targetMins={routine.dayMinutes[dow] ?? 0}
+                    isLoggingCustom={logCustomFor === routine.id}
+                    customMinutes={customMinutes}
+                    onCustomMinutesChange={setCustomMinutes}
+                    onStartCustom={() => { setLogCustomFor(routine.id); setCustomMinutes('') }}
+                    onCancelCustom={() => { setLogCustomFor(null); setCustomMinutes('') }}
+                    onSaveCustom={() => { void logCustom(routine, Number(customMinutes)); setLogCustomFor(null); setCustomMinutes('') }}
+                    onMarkDone={() => markDone(routine)}
+                    onSkip={() => skipRoutine(routine)}
+                    isExpanded={expandedId === routine.id}
+                    onToggleExpand={() => setExpandedId(expandedId === routine.id ? null : routine.id)}
+                  />
+                ))}
+            </div>
+          )}
 
-          {todaysRoutines.map(routine => (
-            <RoutineCard
-              key={routine.id}
-              routine={routine}
-              subjectName={subjectsMap.get(routine.subjectId)?.name ?? 'Unknown'}
-              existingLog={getRoutineLogForToday(routine.id)}
-              targetMins={routine.dayMinutes[dow] ?? 0}
-              isLoggingCustom={logCustomFor === routine.id}
-              customMinutes={customMinutes}
-              onCustomMinutesChange={setCustomMinutes}
-              onStartCustom={() => { setLogCustomFor(routine.id); setCustomMinutes('') }}
-              onCancelCustom={() => { setLogCustomFor(null); setCustomMinutes('') }}
-              onSaveCustom={() => { void logCustom(routine, Number(customMinutes)); setLogCustomFor(null); setCustomMinutes('') }}
-              onMarkDone={() => markDone(routine)}
-              onSkip={() => skipRoutine(routine)}
-              isExpanded={expandedId === routine.id}
-              onToggleExpand={() => setExpandedId(expandedId === routine.id ? null : routine.id)}
-            />
-          ))}
+          {todaysRoutines.some(r => getRoutineLogForToday(r.id)?.completed) && (
+            <div data-section="completed-old" className="mt-4">
+              <Collapsible id="completed-routines" title={`Completed today (${todaysRoutines.filter(r => getRoutineLogForToday(r.id)?.completed).length})`} defaultOpen={false}>
+                {todaysRoutines
+                  .filter(r => getRoutineLogForToday(r.id)?.completed)
+                  .map(routine => (
+                    <RoutineCard
+                      key={routine.id}
+                      routine={routine}
+                      subjectName={subjectsMap.get(routine.subjectId)?.name ?? 'Unknown'}
+                      existingLog={getRoutineLogForToday(routine.id)}
+                      targetMins={routine.dayMinutes[dow] ?? 0}
+                      isLoggingCustom={false}
+                      customMinutes=""
+                      onCustomMinutesChange={() => {}}
+                      onStartCustom={() => {}}
+                      onCancelCustom={() => {}}
+                      onSaveCustom={() => {}}
+                      onMarkDone={() => {}}
+                      onSkip={() => {}}
+                      isExpanded={expandedId === routine.id}
+                      onToggleExpand={() => setExpandedId(expandedId === routine.id ? null : routine.id)}
+                    />
+                  ))}
+              </Collapsible>
+            </div>
+          )}
         </div>
       )}
 

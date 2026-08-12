@@ -37,7 +37,9 @@ export function NumberInput({ value, onChange, min = 0, className = 'input w-24 
           return
         }
         if (draft === '') {
-          onChange(min)
+          // Leave the field empty rather than snapping to `min` — the caller
+          // validates on submit. This avoids the surprise of clearing a field
+          // and having it jump to `min` (L7 fix).
           setDraft(null)
           return
         }
