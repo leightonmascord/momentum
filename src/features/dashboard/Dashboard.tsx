@@ -33,7 +33,7 @@ import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
 import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
-import { useSortable, SortableContext, rectSortingStrategy, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useSortable, SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
 function CustomizeRow({
@@ -1605,15 +1605,14 @@ export default function Dashboard() {
         }}
       >
         {layoutMode === 'grid' ? (
-          <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
-            <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 auto-rows-auto items-start">
+          <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
+            <div ref={containerRef} className="columns-1 md:columns-2 lg:columns-3 gap-2" style={{ columnFill: 'auto' }}>
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
                 const label = meta?.label || id
-                const colClass = cols === 3 ? 'lg:col-span-3' : cols === 2 ? 'lg:col-span-2' : 'lg:col-span-1'
                 return (
-                  <div key={id} className={colClass}>
+                  <div key={id} className="mb-2 break-inside-avoid">
                     <DashboardWidget
                       id={id}
                       label={label}
