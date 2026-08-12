@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
 import { TodayChecklist } from '../../components/widgets/TodayChecklist'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
@@ -141,16 +141,26 @@ function ColumnFloor({ colIdx, active, isTarget }: { colIdx: number; active: boo
     </div>
   )
 }
-// Drop-slot preview shown in the target column during a cross-column drag.
-// Sized to match the dragged widget so the surrounding widgets visibly shift
-// around it as the pointer moves through the column. The actual move is
-// committed in handleDragEnd.
-function PlaceholderSlot({ height }: { height?: number }) {
+// Ghost placeholder rendered in the target column during a cross-column drag.
+// It uses useSortable with the active ID so dnd-kit's strategy animates
+// surrounding widgets around it (useDerivedTransform handles the FLIP).
+// The DragOverlay shows the actual widget following the pointer.
+function GhostWidget({ id, label }: { id: string; label: string }) {
+  const { transform, transition } = useSortable({ id, disabled: { draggable: true } })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
   return (
     <div
-      className="rounded-lg border-2 border-dashed border-primary-400 bg-primary-50/60 dark:border-primary-500 dark:bg-primary-900/20"
-      style={{ minHeight: height ?? 64 }}
-    />
+      style={style}
+      className="rounded-lg border-2 border-dashed border-primary-400 bg-primary-50/30 dark:border-primary-500 dark:bg-primary-900/10 p-3"
+    >
+      <div className="flex items-center gap-2 text-sm font-medium text-primary-700 dark:text-primary-300">
+        <span className="inline-block h-2 w-2 rounded-full bg-primary-400" />
+        {label}
+      </div>
+    </div>
   )
 }
 function SessionRow({
@@ -278,11 +288,38 @@ export default function Dashboard() {
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
-  // Composite snapshot forces a re-render when either the hovered column or
-  // the measured active-widget size changes (both drive the placeholder).
-  // overColumn reads the ref directly so it stays a number for isTarget.
-  useSyncExternalStore(subscribeDragHover, () => `${overColumn$.current}:${activeWidgetSize$.current?.height ?? 0}`)
+  // Composite snapshot forces a re-render when the hovered column, hovered
+  // widget, or measured active-widget size changes — all three drive the
+  // column layout. overColumn/overId read the ref directly so they stay
+  // typed (number | null) for the downstream checks.
+  useSyncExternalStore(subscribeDragHover, () => `${overColumn$.current}:${overId$.current ?? ''}:${activeWidgetSize$.current?.height ?? 0}`)
   const overColumn = overColumn$.current
+  const overId = overId$.current
+  // Viewport auto-scroll while dragging: when the pointer is near the top or
+  // bottom edge of the window, scroll the page so the user can reach widgets
+  // that are off-screen without releasing the drag. Also lets the user scroll
+  // with the wheel while holding a widget (dnd-kit keeps the drag alive).
+  useEffect(() => {
+    if (!activeId) return
+    let pointerY = 0
+    let raf = 0
+    const EDGE = 80
+    const onMove = (e: PointerEvent) => { pointerY = e.clientY }
+    const tick = () => {
+      const vh = window.innerHeight
+      let dy = 0
+      if (pointerY < EDGE) dy = -(EDGE - pointerY) * 0.5
+      else if (pointerY > vh - EDGE) dy = (pointerY - (vh - EDGE)) * 0.5
+      if (dy !== 0) window.scrollBy(0, dy)
+      raf = requestAnimationFrame(tick)
+    }
+    window.addEventListener('pointermove', onMove)
+    raf = requestAnimationFrame(tick)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      cancelAnimationFrame(raf)
+    }
+  }, [activeId])
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Measured freeform container width, so widgets can use the full viewport
   // on wide monitors instead of being capped at a hardcoded 1200px.
@@ -331,22 +368,37 @@ export default function Dashboard() {
     }
     return widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
   }
-  // Memoized per-column item lists. Crucial: returning a NEW array reference
-  // on every render would make dnd-kit's useSortable see "items changed" (it
-  // does a reference compare) and re-measure, re-animating the 200ms transform
-  // transition — which reads as flicker. By memoizing on the actual content
-  // (visibleWidgets + widgetConfigs), the array reference is stable across
-  // renders during a drag, so SortableContext never re-registers and the
-  // same-column reorder stays smooth.
+  // Memoized per-column item lists. During a cross-column drag the active
+  // widget is injected into the target column's items so dnd-kit's
+  // useDerivedTransform animates the surrounding widgets (FLIP). The source
+  // column keeps its original items — the active widget stays visible at
+  // reduced opacity.
   const columnItems = useMemo(() => {
     const cols: string[][] = [[], [], []]
+    const fromCol = activeId != null ? (widgetConfigs[activeId]?.column ?? DEFAULT_CONFIGS[activeId]?.column ?? 0) : -1
+    const isCrossCol = activeId != null && overColumn != null && fromCol !== overColumn
     for (const id of visibleWidgets) {
       const c = widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
+      // Skip the active widget from its source column during cross-column
+      // drag — it will appear in the target column instead.
+      if (isCrossCol && id === activeId) continue
       cols[c] = cols[c] || []
       cols[c].push(id)
     }
+    // Inject the active widget into the target column at the correct
+    // position so the strategy can animate surrounding widgets around it.
+    if (isCrossCol && overColumn != null) {
+      const isOverFloor = overId != null && overId.startsWith(FLOOR_PREFIX)
+      const target = cols[overColumn]
+      let insertIdx = target.length
+      if (overId && !isOverFloor) {
+        const i = target.indexOf(overId)
+        if (i !== -1) insertIdx = i
+      }
+      target.splice(insertIdx, 0, activeId)
+    }
     return cols
-  }, [visibleWidgets, widgetConfigs])
+  }, [visibleWidgets, widgetConfigs, activeId, overColumn, overId])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -1762,16 +1814,8 @@ export default function Dashboard() {
             {[0, 1, 2].map((colIdx) => {
               const colItems = columnItems[colIdx]
               const isTarget = overColumn === colIdx
-              // Cross-column target: compute where to drop the preview slot.
-              const showPlaceholder = isTarget && !!activeId && widgetConfigs[activeId]?.column !== colIdx
-              const insertIdx = showPlaceholder
-                ? (() => {
-                    const oid = overId$.current
-                    if (!oid || oid === activeId || oid.startsWith(FLOOR_PREFIX)) return colItems.length
-                    const i = colItems.indexOf(oid)
-                    return i === -1 ? colItems.length : i
-                  })()
-                : -1
+              const isCrossCol = activeId != null && overColumn != null &&
+                (widgetConfigs[activeId]?.column ?? DEFAULT_CONFIGS[activeId]?.column ?? 0) !== overColumn
               return (
                 <SortableContext
                   key={colIdx}
@@ -1789,12 +1833,14 @@ export default function Dashboard() {
                         : 'border-transparent'
                     )}
                   >
-                    {colItems.map((id, i) => (
-                      <Fragment key={id}>
-                        {showPlaceholder && insertIdx === i && (
-                          <PlaceholderSlot height={activeWidgetSize$.current?.height} />
-                        )}
-                        <div className="break-inside-avoid">
+                    {colItems.map((id) => (
+                      <div key={id} className="break-inside-avoid">
+                        {id === activeId && isTarget && isCrossCol ? (
+                          <GhostWidget
+                            id={id}
+                            label={DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id}
+                          />
+                        ) : (
                           <DashboardWidget
                             id={id}
                             label={DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id}
@@ -1805,12 +1851,9 @@ export default function Dashboard() {
                           >
                             {renderWidget(id)}
                           </DashboardWidget>
-                        </div>
-                      </Fragment>
+                        )}
+                      </div>
                     ))}
-                    {showPlaceholder && insertIdx >= colItems.length && (
-                      <PlaceholderSlot height={activeWidgetSize$.current?.height} />
-                    )}
                     <ColumnFloor colIdx={colIdx} active={!!activeId} isTarget={isTarget} />
                   </div>
                 </SortableContext>
