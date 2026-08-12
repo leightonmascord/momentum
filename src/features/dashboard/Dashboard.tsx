@@ -315,35 +315,20 @@ export default function Dashboard() {
     return widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
   }
 
-  // Build the live "what-if" item list for a column during a drag, so the
-  // target column's widgets visibly shift to make room for the dragged
-  // widget. The source column keeps the active widget in place (rendered
-  // with reduced opacity by DashboardWidget's isDragging) — dnd-kit can't
-  // have the same id registered twice in one DndContext.
+  // Widgets that currently live in the given column. We do NOT inject the
+  // dragged widget into a target column here: doing so causes a feedback
+  // oscillation (inserting a preview shifts the widget under the cursor,
+  // which moves the insertion point, which shifts widgets again) that
+  // reads as flicker. Cross-column drop feedback comes from the column
+  // highlight, the floor drop zones, and the DragOverlay — the actual move
+  // happens once in handleDragEnd. Within a column, dnd-kit's own
+  // verticalListSortingStrategy handles smooth reordering around the active
+  // widget without any extra items.
   function liveColumnItems(colIdx: number): string[] {
-    const inThisCol = (id: string) =>
-      (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
-    const colWidgets = visibleWidgets.filter(inThisCol)
-    if (!activeId) return colWidgets
-    // If the active widget is already in this column (source), keep as-is.
-    if (inThisCol(activeId)) return colWidgets
-    // If this isn't the target column either, no preview to inject.
-    if (overColumn !== colIdx) return colWidgets
-    const overId = currentOverIdRef.current
-    if (!overId || overId.startsWith(FLOOR_PREFIX)) {
-      return [...colWidgets, activeId]
-    }
-    if (inThisCol(overId)) {
-      const idx = colWidgets.indexOf(overId)
-      if (idx === -1) return [...colWidgets, activeId]
-      return [...colWidgets.slice(0, idx), activeId, ...colWidgets.slice(idx)]
-    }
-    return [...colWidgets, activeId]
+    return visibleWidgets.filter(
+      (id) => (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
+    )
   }
-
-  // Track current over id outside React so liveColumnItems (called during
-  // render) can read the latest pointer-over target without re-rendering.
-  const currentOverIdRef = useRef<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -1733,19 +1718,16 @@ export default function Dashboard() {
         }}
         onDragOver={(event) => {
           const overId = event.over ? (event.over.id as string) : null
-          currentOverIdRef.current = overId
           setOverColumn(overId ? columnFor(overId) : null)
         }}
         onDragEnd={(event) => {
           setActiveId(null)
           setOverColumn(null)
-          currentOverIdRef.current = null
           handleDragEnd(event)
         }}
         onDragCancel={() => {
           setActiveId(null)
           setOverColumn(null)
-          currentOverIdRef.current = null
         }}
       >
         {layoutMode === 'grid' ? (
@@ -1769,20 +1751,6 @@ export default function Dashboard() {
                     )}
                   >
                     {colItems.map(id => {
-                      const actualCol = widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
-                      // Preview-only slot: the active widget is being dragged
-                      // into this column but doesn't live here yet. Render an
-                      // empty placeholder so the column visibly makes room.
-                      const isPreview = id === activeId && actualCol !== colIdx
-                      if (isPreview) {
-                        return (
-                          <div
-                            key={id}
-                            className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10"
-                            style={{ minHeight: 64 }}
-                          />
-                        )
-                      }
                       const cols = widgetConfigs[id]?.cols ?? 1
                       const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
                       const label = meta?.label || id
