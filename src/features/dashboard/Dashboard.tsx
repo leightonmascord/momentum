@@ -23,7 +23,7 @@ import { loadSettings } from '../../lib/settings-store'
 import { useStreak } from '../../lib/use-streak'
 import { useStreakPreviewDates } from '../../lib/streak-preview'
 import { db } from '../../db/app-db'
-import { updateRoutineLogsForSession, revertRoutineLogsForSession, updateStreakDayForSession, revertStreakDayForSession } from '../../lib/routine-tracker'
+import { updateRoutineLogsForSession, revertRoutineLogsForSession, updateStreakDayForSession, revertStreakDayForSession, recomputeStreakDaysForDates } from '../../lib/routine-tracker'
 import { sessionIdFor } from '../../lib/timer-persistence'
 import { getDueCount } from '../../lib/fsrs-scheduler'
 import { useSessionSync } from '../../lib/use-session-sync'
@@ -536,17 +536,49 @@ export default function Dashboard() {
       subjectId: editSubjectId,
       updatedAt: isoNow(),
     }
+    const newSession = { ...editLog, ...updated } as Session
+    const newDate = toLocalDateString(newSession.startAt)
+    const oldDate = toLocalDateString(editLog.startAt)
+    const affectedDates = Array.from(new Set([newDate, oldDate])).filter(Boolean)
     await db.sessions.update(editLog.id, updated)
-    await updateStreakDayForSession({ ...editLog, ...updated })
+    // Routine log tracking: revert the old date's contribution, apply the new.
+    await Promise.all([
+      revertRoutineLogsForSession(editLog),
+      updateRoutineLogsForSession(newSession),
+    ])
+    // Streak day: recompute both old and new dates so the streakDays table
+    // (read by Calendar page, AI review, etc.) stays consistent with the
+    // edited session — including when the date itself changed.
+    await recomputeStreakDaysForDates(affectedDates)
+    const freshStreakDays = await db.streakDays.toArray()
     mutate(prev => ({
       ...prev,
       sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, ...updated } : s),
+      streakDays: freshStreakDays,
     }))
     setEditLog(null)
     push({
       description: `Edited session`,
-      undo: async () => { await db.sessions.update(editLog.id, { startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt }); mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt } : s) })) },
-      redo: async () => { await db.sessions.update(editLog.id, updated); mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, ...updated } : s) })) },
+      undo: async () => {
+        await db.sessions.update(editLog.id, { startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt })
+        await Promise.all([
+          revertRoutineLogsForSession(newSession),
+          updateRoutineLogsForSession(prevSession as Session),
+          recomputeStreakDaysForDates(affectedDates),
+        ])
+        const undoStreakDays = await db.streakDays.toArray()
+        mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, startAt: prevSession.startAt, endAt: prevSession.endAt, durationMinutes: prevSession.durationMinutes, durationSeconds: prevSession.durationSeconds, subjectId: prevSession.subjectId, updatedAt: prevSession.updatedAt } : s), streakDays: undoStreakDays }))
+      },
+      redo: async () => {
+        await db.sessions.update(editLog.id, updated)
+        await Promise.all([
+          revertRoutineLogsForSession(prevSession as Session),
+          updateRoutineLogsForSession(newSession),
+          recomputeStreakDaysForDates(affectedDates),
+        ])
+        const redoStreakDays = await db.streakDays.toArray()
+        mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === editLog.id ? { ...s, ...updated } : s), streakDays: redoStreakDays }))
+      },
     })
   }
   async function deleteSession(id: string) {
@@ -1606,7 +1638,7 @@ export default function Dashboard() {
       >
         {layoutMode === 'grid' ? (
           <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
-            <div ref={containerRef} className="columns-1 md:columns-2 lg:columns-3 gap-2" style={{ columnFill: 'auto' }}>
+            <div ref={containerRef} className="columns-1 md:columns-2 lg:columns-3 gap-2">
               {visibleWidgets.map(id => {
                 const cols = widgetConfigs[id]?.cols ?? 1
                 const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
@@ -2021,16 +2053,33 @@ export default function Dashboard() {
         subjects={data.subjects}
         onSave={async (updates) => {
           if (!viewSession) return
-          await db.sessions.update(viewSession.id, {
+          const updatedSession: Session = {
+            ...viewSession,
             subjectId: updates.subjectId,
             startAt: updates.startAt,
             endAt: updates.endAt,
             durationMinutes: updates.durationMinutes,
-            focusTag: updates.focusTag ?? undefined,
+            durationSeconds: updates.durationMinutes * 60,
+            focusTag: updates.focusTag || undefined,
             note: updates.note,
             updatedAt: isoNow(),
-          })
-          mutate(prev => ({ ...prev, sessions: prev.sessions.map(s => s.id === viewSession.id ? { ...s, subjectId: updates.subjectId, startAt: updates.startAt, endAt: updates.endAt, durationMinutes: updates.durationMinutes, focusTag: updates.focusTag ?? undefined, note: updates.note, updatedAt: isoNow() } : s) }))
+          }
+          await db.sessions.update(viewSession.id, updatedSession)
+          // Keep routine-log and streak-day aggregates consistent for both the
+          // old and new dates (they differ when the date was changed).
+          const oldDate = toLocalDateString(viewSession.startAt)
+          const newDate = toLocalDateString(updatedSession.startAt)
+          await Promise.all([
+            revertRoutineLogsForSession(viewSession),
+            updateRoutineLogsForSession(updatedSession),
+            recomputeStreakDaysForDates(Array.from(new Set([oldDate, newDate])).filter(Boolean)),
+          ])
+          const freshStreakDays = await db.streakDays.toArray()
+          mutate(prev => ({
+            ...prev,
+            sessions: prev.sessions.map(s => s.id === viewSession.id ? updatedSession : s),
+            streakDays: freshStreakDays,
+          }))
         }}
         subjectName={viewSession ? data.subjects.find((s) => s.id === viewSession.subjectId)?.name : undefined}
         projectName={viewSession?.projectId ? data.projects.find((p) => p.id === viewSession.projectId)?.name : undefined}
