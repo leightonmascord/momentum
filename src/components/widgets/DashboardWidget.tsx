@@ -1,8 +1,9 @@
-import { ReactNode, useRef } from 'react'
+import { ReactNode, useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { cn } from '../../lib/utils'
 import { MIN_WIDGET_PX_W, MIN_WIDGET_PX_H, MAX_WIDGET_PX_W, MAX_WIDGET_PX_H } from '../../lib/use-dashboard-widgets'
+import { activeWidgetSize$, emitDragMeasure } from '../../lib/dashboard-drag-store'
 
 type Mode = 'grid' | 'freeform'
 
@@ -57,6 +58,17 @@ export function DashboardWidget({
     id,
     disabled: sortableDisabled,
   })
+  // Measure the widget's height when it's being dragged, so the dashboard
+  // placeholder in the target column can match it and the reflow is clearly
+  // visible as the user moves the widget across columns.
+  const nodeRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (isDragging && nodeRef.current) {
+      const h = nodeRef.current.getBoundingClientRect().height
+      activeWidgetSize$.current = { height: h }
+      emitDragMeasure()
+    }
+  }, [isDragging])
 
   // ── Freeform header drag (native, no collision-detection snapping) ──
   const dragRef = useRef<{ startX: number; startY: number } | null>(null)
@@ -110,7 +122,6 @@ export function DashboardWidget({
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
-
   const sortableStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -123,7 +134,7 @@ export function DashboardWidget({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={(el) => { setNodeRef(el); nodeRef.current = el }}
       style={style}
       className={cn(
         'group/widget relative h-full w-full overflow-hidden rounded-lg border bg-white shadow-sm dark:bg-slate-800',

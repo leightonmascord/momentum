@@ -31,6 +31,7 @@ import type { Session, DayOfWeek, RoutineLog, Routine, Activity, ActivityLog } f
 import { Link, useNavigate } from 'react-router-dom'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
+import { overColumn$, overId$, activeWidgetSize$, subscribeDragHover, emitDragHover, resetDragState } from '../../lib/dashboard-drag-store'
 import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, useDroppable, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -117,14 +118,6 @@ function copySessionInfo(session: Session & { subjectName: string }) {
   const src = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   navigator.clipboard.writeText(`${session.subjectName} · ${formatMinutes(session.durationMinutes)} · ${time} · ${src}`).catch(() => {})
 }
-// Ref-based tracking of which column the pointer is over during a drag.
-// Bridged into React via useSyncExternalStore so liveColumnItems can read
-// the latest value for preview injection without triggering a re-render
-// on every pointer move (which was the source of the earlier flicker).
-const overColumn$ = { current: null as number | null }
-const overId$ = { current: null as string | null }
-function subscribeDragHover(cb: () => void) { window.addEventListener('draghover', cb); return () => window.removeEventListener('draghover', cb) }
-function emitDragHover() { window.dispatchEvent(new Event('draghover')) }
 // Bottom-of-column drop target. Rendered as a real droppable so users can
 // drop a widget at the end of any column (including empty columns). Only
 // visible while a drag is in progress.
@@ -146,6 +139,18 @@ function ColumnFloor({ colIdx, active, isTarget }: { colIdx: number; active: boo
     >
       {active ? 'Drop at bottom' : ''}
     </div>
+  )
+}
+// Drop-slot preview shown in the target column during a cross-column drag.
+// Sized to match the dragged widget so the surrounding widgets visibly shift
+// around it as the pointer moves through the column. The actual move is
+// committed in handleDragEnd.
+function PlaceholderSlot({ height }: { height?: number }) {
+  return (
+    <div
+      className="rounded-lg border-2 border-dashed border-primary-400 bg-primary-50/60 dark:border-primary-500 dark:bg-primary-900/20"
+      style={{ minHeight: height ?? 64 }}
+    />
   )
 }
 function SessionRow({
@@ -273,7 +278,11 @@ export default function Dashboard() {
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
-  const overColumn = useSyncExternalStore(subscribeDragHover, () => overColumn$.current)
+  // Composite snapshot forces a re-render when either the hovered column or
+  // the measured active-widget size changes (both drive the placeholder).
+  // overColumn reads the ref directly so it stays a number for isTarget.
+  useSyncExternalStore(subscribeDragHover, () => `${overColumn$.current}:${activeWidgetSize$.current?.height ?? 0}`)
+  const overColumn = overColumn$.current
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Measured freeform container width, so widgets can use the full viewport
   // on wide monitors instead of being capped at a hardcoded 1200px.
@@ -1723,9 +1732,7 @@ export default function Dashboard() {
         collisionDetection={pointerWithin}
         onDragStart={(event) => {
           setActiveId(event.active.id as string)
-          overColumn$.current = null
-          overId$.current = null
-          emitDragHover()
+          resetDragState()
         }}
         onDragOver={(event) => {
           const overId = event.over ? (event.over.id as string) : null
@@ -1742,16 +1749,12 @@ export default function Dashboard() {
         }}
         onDragEnd={(event) => {
           setActiveId(null)
-          overId$.current = null
-          overColumn$.current = null
-          emitDragHover()
+          resetDragState()
           handleDragEnd(event)
         }}
         onDragCancel={() => {
           setActiveId(null)
-          overId$.current = null
-          overColumn$.current = null
-          emitDragHover()
+          resetDragState()
         }}
       >
         {layoutMode === 'grid' ? (
@@ -1780,17 +1783,16 @@ export default function Dashboard() {
                     data-column={colIdx}
                     data-testid={`dashboard-col-${colIdx}`}
                     className={cn(
-                      'flex flex-col gap-2 min-h-[100px] rounded-lg p-1 transition-colors',
-                      isTarget && activeId && 'bg-primary-50/60 ring-1 ring-primary-300 dark:bg-primary-900/10 dark:ring-primary-700'
+                      'flex flex-col gap-2 min-h-[100px] rounded-lg p-1 transition-colors border-2',
+                      isTarget && activeId
+                        ? 'bg-primary-50/60 border-primary-400 dark:bg-primary-900/15 dark:border-primary-600'
+                        : 'border-transparent'
                     )}
                   >
                     {colItems.map((id, i) => (
                       <Fragment key={id}>
                         {showPlaceholder && insertIdx === i && (
-                          <div
-                            className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/50 dark:border-primary-700 dark:bg-primary-900/20"
-                            style={{ minHeight: 64 }}
-                          />
+                          <PlaceholderSlot height={activeWidgetSize$.current?.height} />
                         )}
                         <div className="break-inside-avoid">
                           <DashboardWidget
@@ -1807,10 +1809,7 @@ export default function Dashboard() {
                       </Fragment>
                     ))}
                     {showPlaceholder && insertIdx >= colItems.length && (
-                      <div
-                        className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/50 dark:border-primary-700 dark:bg-primary-900/20"
-                        style={{ minHeight: 64 }}
-                      />
+                      <PlaceholderSlot height={activeWidgetSize$.current?.height} />
                     )}
                     <ColumnFloor colIdx={colIdx} active={!!activeId} isTarget={isTarget} />
                   </div>
