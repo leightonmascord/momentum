@@ -14,8 +14,8 @@ function overlaps(a: Box, b: Box): boolean {
 describe('readBoxes', () => {
   it('clamps negative x/y to 0 and supplies defaults', () => {
     const boxes = readBoxes({
-      a: { x: -10, y: -5, cols: 1, rows: 1, order: 0 },
-      b: { cols: 1, rows: 1, order: 1 },
+      a: { x: -10, y: -5, cols: 1, rows: 1, column: 0, order: 0 },
+      b: { cols: 1, rows: 1, column: 1, order: 1 },
     })
     expect(boxes[0]).toMatchObject({ x: 0, y: 0, width: 360, height: 280 })
     expect(boxes[1]).toMatchObject({ x: 0, y: 0, width: 360, height: 280 })

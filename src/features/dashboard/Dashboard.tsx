@@ -234,7 +234,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData, mutate } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, runCascade } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, runCascade, moveWidgetToColumn } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -280,12 +280,28 @@ export default function Dashboard() {
     const { active, over } = event
     // Freeform mode uses native pointer drag; handleDragEnd is grid-only.
     if (layoutMode === 'freeform') return
-    if (over && active.id !== over.id) {
-      const fromIndex = visibleWidgets.indexOf(active.id as string)
-      const toIndex = visibleWidgets.indexOf(over.id as string)
-      const fromWidget = active.id as string
-      const toWidget = over.id as string
-      setVisibleWidgets(arrayMove(visibleWidgets, fromIndex, toIndex))
+    if (!over || active.id === over.id) return
+
+    const fromId = active.id as string
+    const toId = over.id as string
+    const fromWidget = fromId
+    const toWidget = toId
+
+    // Determine which column the over item belongs to.
+    const overCol = widgetConfigs[toId]?.column ?? DEFAULT_CONFIGS[toId]?.column ?? 0
+    const fromCol = widgetConfigs[fromId]?.column ?? DEFAULT_CONFIGS[fromId]?.column ?? 0
+
+    if (fromCol !== overCol) {
+      // Cross-column drop: move the widget to the new column.
+      moveWidgetToColumn(fromId, overCol, toId)
+      push({
+        description: `Moved widget to column ${overCol + 1}`,
+        undo: async () => moveWidgetToColumn(fromId, fromCol, null),
+        redo: async () => moveWidgetToColumn(fromId, overCol, toId),
+      })
+    } else {
+      // Same-column reorder.
+      setVisibleWidgets(arrayMove(visibleWidgets, visibleWidgets.indexOf(fromId), visibleWidgets.indexOf(toId)))
       push({
         description: 'Reordered widgets',
         undo: async () => setVisibleWidgets(prev => {
@@ -1637,29 +1653,52 @@ export default function Dashboard() {
         }}
       >
         {layoutMode === 'grid' ? (
-          <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
-            <div ref={containerRef} className="columns-1 md:columns-2 lg:columns-3 gap-2">
-              {visibleWidgets.map(id => {
-                const cols = widgetConfigs[id]?.cols ?? 1
-                const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-                const label = meta?.label || id
-                return (
-                  <div key={id} className="mb-2 break-inside-avoid">
-                    <DashboardWidget
-                      id={id}
-                      label={label}
-                      mode="grid"
-                      cols={cols}
-                      onResizeGrid={(c) => setWidgetSize(id, c, 1)}
-                      onRemove={() => removeWidgetWithUndo(id)}
-                    >
-                      {renderWidget(id)}
-                    </DashboardWidget>
+          <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 items-start">
+            {[0, 1, 2].map((colIdx) => {
+              const colWidgets = visibleWidgets.filter((id) =>
+                (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
+              )
+              return (
+                <SortableContext
+                  key={colIdx}
+                  items={colWidgets}
+                  id={`col-${colIdx}`}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div
+                    data-column={colIdx}
+                    data-testid={`dashboard-col-${colIdx}`}
+                    className="flex flex-col gap-2 min-h-[100px]"
+                  >
+                    {colWidgets.length === 0 && (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-8 text-center text-xs text-slate-400 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-600">
+                        Drop widgets here
+                      </div>
+                    )}
+                    {colWidgets.map(id => {
+                      const cols = widgetConfigs[id]?.cols ?? 1
+                      const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
+                      const label = meta?.label || id
+                      return (
+                        <div key={id} className="break-inside-avoid">
+                          <DashboardWidget
+                            id={id}
+                            label={label}
+                            mode="grid"
+                            cols={cols}
+                            onResizeGrid={(c) => setWidgetSize(id, c, 1)}
+                            onRemove={() => removeWidgetWithUndo(id)}
+                          >
+                            {renderWidget(id)}
+                          </DashboardWidget>
+                        </div>
+                      )
+                    })}
                   </div>
-                )
-              })}
-            </div>
-          </SortableContext>
+                </SortableContext>
+              )
+            })}
+          </div>
         ) : (
           <div ref={containerRef} data-tour="freeform-area" className="relative w-full overflow-x-hidden bg-slate-50 dark:bg-slate-900 rounded-lg"
             style={{ minHeight: 600, height: (() => {
