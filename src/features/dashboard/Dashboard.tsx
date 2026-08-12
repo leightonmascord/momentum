@@ -32,7 +32,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
 import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
 import { FreeformWidget } from '../../components/widgets/FreeformWidget'
-import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
+import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, useDroppable, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
@@ -116,6 +116,29 @@ function copySessionInfo(session: Session & { subjectName: string }) {
   const time = format(new Date(session.startAt), 'h:mm a')
   const src = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   navigator.clipboard.writeText(`${session.subjectName} · ${formatMinutes(session.durationMinutes)} · ${time} · ${src}`).catch(() => {})
+}
+// Bottom-of-column drop target. Rendered as a real droppable so users can
+// drop a widget at the end of any column (including empty columns). Only
+// visible while a drag is in progress.
+function ColumnFloor({ colIdx, active, isTarget }: { colIdx: number; active: boolean; isTarget: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `__col-floor__${colIdx}` })
+  const highlighted = active && (isTarget || isOver)
+  return (
+    <div
+      ref={setNodeRef}
+      data-floor-col={colIdx}
+      className={cn(
+        'flex h-10 items-center justify-center rounded-lg border-2 border-dashed text-xs font-medium transition-all',
+        highlighted
+          ? 'border-primary-400 bg-primary-100/70 text-primary-700 dark:border-primary-500 dark:bg-primary-900/30 dark:text-primary-300'
+          : active
+            ? 'border-slate-200 text-slate-300 dark:border-slate-700 dark:text-slate-600'
+            : 'border-transparent text-transparent'
+      )}
+    >
+      {active ? 'Drop at bottom' : ''}
+    </div>
+  )
 }
 function SessionRow({
   session, project, menuSessionId, setMenuSessionId,
@@ -242,6 +265,7 @@ export default function Dashboard() {
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [overColumn, setOverColumn] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Measured freeform container width, so widgets can use the full viewport
   // on wide monitors instead of being capped at a hardcoded 1200px.
@@ -275,6 +299,51 @@ export default function Dashboard() {
   const [batchSubjectId, setBatchSubjectId] = useState('')
   const [showActivityConfirmation, setShowActivityConfirmation] = useState(true)
   const [fabOpen, setFabOpen] = useState(false)
+  // Synthetic droppable id appended to each column's SortableContext so users
+  // can drop a widget at the bottom of any column (including empty columns).
+  // The dnd-kit SortableContext requires all sortable ids to be unique within
+  // the DndContext, so we use a column-suffixed prefix instead of a single
+  // shared "floor" id.
+  const FLOOR_PREFIX = '__col-floor__'
+
+  // Resolve the column for any droppable id (real widget or floor).
+  function columnFor(id: string): number | null {
+    if (id.startsWith(FLOOR_PREFIX)) {
+      const n = Number(id.slice(FLOOR_PREFIX.length))
+      return Number.isFinite(n) ? n : null
+    }
+    return widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
+  }
+
+  // Build the live "what-if" item list for a column during a drag, so the
+  // target column's widgets visibly shift to make room for the dragged
+  // widget. The source column keeps the active widget in place (rendered
+  // with reduced opacity by DashboardWidget's isDragging) — dnd-kit can't
+  // have the same id registered twice in one DndContext.
+  function liveColumnItems(colIdx: number): string[] {
+    const inThisCol = (id: string) =>
+      (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
+    const colWidgets = visibleWidgets.filter(inThisCol)
+    if (!activeId) return colWidgets
+    // If the active widget is already in this column (source), keep as-is.
+    if (inThisCol(activeId)) return colWidgets
+    // If this isn't the target column either, no preview to inject.
+    if (overColumn !== colIdx) return colWidgets
+    const overId = currentOverIdRef.current
+    if (!overId || overId.startsWith(FLOOR_PREFIX)) {
+      return [...colWidgets, activeId]
+    }
+    if (inThisCol(overId)) {
+      const idx = colWidgets.indexOf(overId)
+      if (idx === -1) return [...colWidgets, activeId]
+      return [...colWidgets.slice(0, idx), activeId, ...colWidgets.slice(idx)]
+    }
+    return [...colWidgets, activeId]
+  }
+
+  // Track current over id outside React so liveColumnItems (called during
+  // render) can read the latest pointer-over target without re-rendering.
+  const currentOverIdRef = useRef<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -287,17 +356,29 @@ export default function Dashboard() {
     const fromWidget = fromId
     const toWidget = toId
 
-    // Determine which column the over item belongs to.
-    const overCol = widgetConfigs[toId]?.column ?? DEFAULT_CONFIGS[toId]?.column ?? 0
-    const fromCol = widgetConfigs[fromId]?.column ?? DEFAULT_CONFIGS[fromId]?.column ?? 0
+    // Determine source / destination columns. Floor items are per-column
+    // synthetic droppables used to drop at the bottom (or into empty cols).
+    const isOverFloor = toId.startsWith(FLOOR_PREFIX)
+    const overCol = isOverFloor ? columnFor(toId)! : columnFor(toId) ?? 0
+    const fromCol = columnFor(fromId) ?? 0
 
     if (fromCol !== overCol) {
       // Cross-column drop: move the widget to the new column.
-      moveWidgetToColumn(fromId, overCol, toId)
+      // Floor = append; otherwise insert before the over widget.
+      const beforeId = isOverFloor ? null : toId
+      moveWidgetToColumn(fromId, overCol, beforeId)
       push({
         description: `Moved widget to column ${overCol + 1}`,
         undo: async () => moveWidgetToColumn(fromId, fromCol, null),
-        redo: async () => moveWidgetToColumn(fromId, overCol, toId),
+        redo: async () => moveWidgetToColumn(fromId, overCol, beforeId),
+      })
+    } else if (isOverFloor) {
+      // Same-column floor drop → append.
+      moveWidgetToColumn(fromId, overCol, null)
+      push({
+        description: 'Moved widget to bottom',
+        undo: async () => moveWidgetToColumn(fromId, fromCol, null),
+        redo: async () => moveWidgetToColumn(fromId, overCol, null),
       })
     } else {
       // Same-column reorder.
@@ -1646,36 +1727,62 @@ export default function Dashboard() {
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
-        onDragStart={(event) => setActiveId(event.active.id as string)}
+        onDragStart={(event) => {
+          setActiveId(event.active.id as string)
+          setOverColumn(null)
+        }}
+        onDragOver={(event) => {
+          const overId = event.over ? (event.over.id as string) : null
+          currentOverIdRef.current = overId
+          setOverColumn(overId ? columnFor(overId) : null)
+        }}
         onDragEnd={(event) => {
           setActiveId(null)
+          setOverColumn(null)
+          currentOverIdRef.current = null
           handleDragEnd(event)
+        }}
+        onDragCancel={() => {
+          setActiveId(null)
+          setOverColumn(null)
+          currentOverIdRef.current = null
         }}
       >
         {layoutMode === 'grid' ? (
           <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 items-start">
             {[0, 1, 2].map((colIdx) => {
-              const colWidgets = visibleWidgets.filter((id) =>
-                (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
-              )
+              const colItems = liveColumnItems(colIdx)
+              const isTarget = overColumn === colIdx
               return (
                 <SortableContext
                   key={colIdx}
-                  items={colWidgets}
+                  items={colItems}
                   id={`col-${colIdx}`}
                   strategy={verticalListSortingStrategy}
                 >
                   <div
                     data-column={colIdx}
                     data-testid={`dashboard-col-${colIdx}`}
-                    className="flex flex-col gap-2 min-h-[100px]"
-                  >
-                    {colWidgets.length === 0 && (
-                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-8 text-center text-xs text-slate-400 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-600">
-                        Drop widgets here
-                      </div>
+                    className={cn(
+                      'flex flex-col gap-2 min-h-[100px] rounded-lg p-1 transition-colors',
+                      isTarget && activeId && 'bg-primary-50/60 ring-1 ring-primary-300 dark:bg-primary-900/10 dark:ring-primary-700'
                     )}
-                    {colWidgets.map(id => {
+                  >
+                    {colItems.map(id => {
+                      const actualCol = widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
+                      // Preview-only slot: the active widget is being dragged
+                      // into this column but doesn't live here yet. Render an
+                      // empty placeholder so the column visibly makes room.
+                      const isPreview = id === activeId && actualCol !== colIdx
+                      if (isPreview) {
+                        return (
+                          <div
+                            key={id}
+                            className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10"
+                            style={{ minHeight: 64 }}
+                          />
+                        )
+                      }
                       const cols = widgetConfigs[id]?.cols ?? 1
                       const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
                       const label = meta?.label || id
@@ -1694,6 +1801,7 @@ export default function Dashboard() {
                         </div>
                       )
                     })}
+                    <ColumnFloor colIdx={colIdx} active={!!activeId} isTarget={isTarget} />
                   </div>
                 </SortableContext>
               )
@@ -1804,13 +1912,15 @@ export default function Dashboard() {
           </div>
         )}
         <DragOverlay dropAnimation={null}>
-          {activeId ? (
-            <div className="w-64 rounded-lg border-2 border-primary-500 bg-primary-50/95 p-4 shadow-2xl dark:bg-primary-900/30">
-              <p className="text-sm font-semibold text-primary-800 dark:text-primary-200">
-                {DASHBOARD_WIDGETS_METADATA.find(w => w.id === activeId)?.label ?? activeId}
-              </p>
-            </div>
-          ) : null}
+          {activeId ? (() => {
+            const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === activeId)
+            const label = meta?.label || activeId
+            return (
+              <div className="w-64 rounded-lg border-2 border-primary-500 bg-white/95 p-4 shadow-2xl dark:bg-slate-800/95">
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{label}</h3>
+              </div>
+            )
+          })() : null}
         </DragOverlay>
       </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
