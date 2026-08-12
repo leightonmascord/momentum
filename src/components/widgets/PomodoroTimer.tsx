@@ -318,6 +318,7 @@ export function PomodoroTimer() {
     simpleSafetyFiredRef.current = false
     const tick = () => {
       const elapsed = simplePausedOffset + Math.floor((Date.now() - simpleStartedAt) / 1000)
+      setSimpleSeconds(elapsed)
       // 12-hour safety guard — warn and auto-pause if elapsed exceeds limit
       if (elapsed >= SAFETY_LIMIT_SECONDS && !simpleSafetyFiredRef.current) {
         simpleSafetyFiredRef.current = true
