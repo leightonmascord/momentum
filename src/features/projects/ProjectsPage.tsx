@@ -231,7 +231,7 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visibleProjects.map((project) => {
-            const totalMinutes = data.sessions.filter((s) => s.projectId === project.id).reduce((sum, s) => sum + s.durationMinutes, 0)
+            const totalMinutes = data.sessions.filter((s) => s.projectId === project.id && !s.deletedAt).reduce((sum, s) => sum + s.durationMinutes, 0)
             const openTasks = data.assignments.filter((a) => a.projectId === project.id && !a.completed && !a.deletedAt).length
             const goalTarget = project.dailyTargetMinutes ?? project.weeklyTargetMinutes ?? project.totalTargetMinutes ?? 0
             const todayStr = format(new Date(), 'yyyy-MM-dd')

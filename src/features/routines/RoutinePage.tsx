@@ -11,7 +11,8 @@ import { Modal } from '../../components/ui/Modal'
 import { ColorPicker } from '../../components/ui/ColorPicker'
 import { v4 as uuid } from 'uuid'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
-import type { Routine, RoutineLog, DayOfWeek } from '../../domain/types'
+import type { Routine, RoutineLog, DayOfWeek, Session } from '../../domain/types'
+import { sessionIdFor } from '../../lib/timer-persistence'
 
 const DEFAULT_COLOR = '#6366f1'
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -213,11 +214,37 @@ export default function RoutinePage() {
       createdAt: isoNow(),
     }
     try {
+      // Create a matching Session so the minutes count toward today's total
+      // and the streak, the same way `markDone` does (M10 fix).
+      const now = new Date()
+      const start = new Date(now.getTime() - logMinutesValue * 60_000)
+      const startAt = start.toISOString()
+      const session: Session = {
+        id: sessionIdFor(startAt, routine.subjectId, logMinutesValue),
+        subjectId: routine.subjectId,
+        projectId: routine.projectId ?? null,
+        routineId: routine.id,
+        startAt,
+        endAt: now.toISOString(),
+        durationMinutes: logMinutesValue,
+        source: 'manual',
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      }
+      await db.sessions.put(session)
       await db.routineLogs.add(newLog)
       push({
         description: `Logged ${logMinutesValue} min for "${routine.name}"`,
-        undo: async () => { await db.routineLogs.delete(newLogId); await loadData() },
-        redo: async () => { await db.routineLogs.add(newLog); await loadData() },
+        undo: async () => {
+          await db.routineLogs.delete(newLogId)
+          await db.sessions.delete(session.id)
+          await loadData()
+        },
+        redo: async () => {
+          await db.routineLogs.add(newLog)
+          await db.sessions.put(session)
+          await loadData()
+        },
       })
       setLogMinutesRoutineId(null)
       setLogMinutesValue(0)

@@ -27,7 +27,9 @@ export async function updateRoutineLogsForSession(session: Session): Promise<voi
     return true
   })
     // Tag the session with the first matching routine (only if not already tagged)
-    if (matching.length > 0 && !session.routineId) {
+    // Only tag auto-routine sessions — manually created sessions should not
+    // be silently assigned to a routine.
+    if (matching.length > 0 && !session.routineId && session.source === 'autoRoutine') {
       await db.sessions.update(session.id, { routineId: matching[0].id, updatedAt: isoNow() })
     }
 
@@ -171,5 +173,47 @@ export async function revertStreakDayForSession(session: Session): Promise<void>
   } else if (existing) {
     const goalMet = totalMinutes >= target
     await db.streakDays.update(dateKey, { totalMinutes, goalMet })
+  }
+}
+/**
+ * Recompute streak days for a set of dates after bulk session soft-deletes
+ * (e.g. subject/category delete cascade). For each date, re-sums all active
+ * academic session minutes and updates or removes the StreakDay record.
+ */
+export async function recomputeStreakDaysForDates(dateKeys: string[]): Promise<void> {
+  if (dateKeys.length === 0) return
+  const subjects = await db.subjects.toArray()
+  const categories = await db.categories.toArray()
+  const settings = loadSettings()
+  const target = settings.dailyTargetMinutes
+
+  for (const dateKey of dateKeys) {
+    const dayStart = new Date(`${dateKey}T00:00:00`).toISOString()
+    const dayEnd = new Date(`${dateKey}T23:59:59.999`).toISOString()
+    const todaysSessions = await db.sessions
+      .where('startAt')
+      .between(dayStart, dayEnd, true, true)
+      .toArray()
+
+    let totalMinutes = 0
+    for (const s of todaysSessions) {
+      if (s.deletedAt) continue
+      if (getSessionScope(s, subjects, categories) !== 'academic') continue
+      totalMinutes += s.durationMinutes
+    }
+
+    const existing = await db.streakDays.get(dateKey)
+    if (totalMinutes === 0 && existing) {
+      await db.streakDays.delete(dateKey)
+    } else if (existing) {
+      await db.streakDays.update(dateKey, { totalMinutes, goalMet: totalMinutes >= target })
+    } else if (totalMinutes > 0) {
+      await db.streakDays.add({
+        id: dateKey,
+        totalMinutes,
+        goalMet: totalMinutes >= target,
+        createdAt: isoNow(),
+      })
+    }
   }
 }

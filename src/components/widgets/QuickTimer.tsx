@@ -91,10 +91,11 @@ export default function QuickTimer() {
     }
   }, [running])
 
-  // Persist whenever any timer state changes
+  // Persist whenever persisted state changes. Drop `seconds` from deps so we
+  // don't write localStorage on every tick (L8 fix).
   useEffect(() => {
     savePersisted({ running, seconds, label, subjectId, focusTag, startedAt: running ? startedAtRef.current : null })
-  }, [running, seconds, label, subjectId, focusTag])
+  }, [running, label, subjectId, focusTag])
   function start() {
     startedAtRef.current = Date.now()
     setFocusTag(null)
@@ -114,10 +115,9 @@ export default function QuickTimer() {
       const elapsedSinceStart = startedAtRef.current !== null ? Math.floor((now - startedAtRef.current) / 1000) : 0
       const total = seconds + elapsedSinceStart
       if (total < 10) return
-      let subject = data.subjects.find((s) => s.id === subjectId)
-      if (!subject) subject = data.subjects[0]
+      let subject = data.subjects.find((s) => s.id === subjectId && !s.deletedAt)
       if (!subject) {
-        window.alert('No subjects found. Please create a subject first so your session can be logged.')
+        window.alert('No valid focus area selected. Your session was not saved.')
         return
       }
       const nowDate = new Date()

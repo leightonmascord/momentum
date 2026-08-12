@@ -17,7 +17,7 @@ import { Modal } from '../../components/ui/Modal'
 import { HoverCard } from '../../components/ui/HoverCard'
 import { ContextMenu, type ContextMenuItem } from '../../components/ui/ContextMenu'
 import { useSwipe } from '../../lib/use-swipe'
-import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString } from '../../lib/utils'
+import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString, STREAK_MILESTONES } from '../../lib/utils'
 import { loadSettings } from '../../lib/settings-store'
 import { useStreak } from '../../lib/use-streak'
 import { db } from '../../db/app-db'
@@ -109,7 +109,6 @@ function CustomizeRow({
     </div>
   )
 }
-const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
 const CELEBRATION_KEY = 'momentum-last-celebration'
 function copySessionInfo(session: Session & { subjectName: string }) {
   const time = format(new Date(session.startAt), 'h:mm a')
@@ -552,7 +551,7 @@ export default function Dashboard() {
       .map(id => data.sessions.find(s => s.id === id))
       .filter((s): s is Session => !!s)
     await Promise.all(targets.map(s => db.sessions.delete(s.id)))
-    for (const s of targets) syncSessionDelete(s.id)
+    await Promise.all(targets.map(s => syncSessionDelete(s.id)))
     await Promise.all(
       targets.flatMap(s => [revertRoutineLogsForSession(s), revertStreakDayForSession(s)])
     )
@@ -1280,7 +1279,11 @@ export default function Dashboard() {
               async function untickActivity(activity: Activity, existingLog: ActivityLog) {
                 await db.activityLogs.delete(existingLog.id)
                 if (existingLog.status === 'completed' && existingLog.actualMinutes && existingLog.actualMinutes > 0 && activity.subjectId) {
-                  const sessionId = sessionIdFor(existingLog.createdAt, activity.subjectId, existingLog.actualMinutes)
+                  // Prefer the sessionId saved on the log (H2 fix) — earlier code
+                  // re-derived it from `existingLog.createdAt` which produced a
+                  // wrong id and silently left the session behind in Dexie/cloud.
+                  const sessionId = existingLog.sessionId
+                    ?? sessionIdFor(existingLog.createdAt, activity.subjectId, existingLog.actualMinutes)
                   const existingSession = data.sessions.find(s => s.id === sessionId)
                   if (existingSession) {
                     await db.sessions.delete(existingSession.id)
@@ -1378,6 +1381,7 @@ export default function Dashboard() {
                                     status: 'completed',
                                     actualMinutes: dayMinutes,
                                     createdAt: now,
+                                    sessionId: session?.id,
                                   }
                                   await db.activityLogs.add(logEntry)
                                   const subjectName = data.subjects.find(s => s.id === activity.subjectId)?.name ?? 'Unknown'
@@ -1416,7 +1420,13 @@ export default function Dashboard() {
         return (
           <div className="space-y-3 p-2">
             {(() => {
-              const pendingSessions = data.sessions.filter(s => s.source === 'autoRoutine' && s.deletedAt)
+              // Only show sessions created within the last 48h as "pending
+              // confirmation". Older soft-deleted autoRoutine sessions are from
+              // stale deletes and should not clutter the widget.
+              const cutoff = Date.now() - 48 * 60 * 60 * 1000
+              const pendingSessions = data.sessions.filter(
+                s => s.source === 'autoRoutine' && s.deletedAt && new Date(s.createdAt).getTime() > cutoff
+              )
               if (pendingSessions.length === 0) {
                 return <p className="text-sm text-slate-500 p-4">No pending auto-logged sessions</p>
               }
@@ -1782,9 +1792,9 @@ export default function Dashboard() {
             {[
               { label: 'Log study time', icon: '⏱', onClick: () => { setLogModalOpen(true); setFabOpen(false) } },
               { label: 'Start quick Pomodoro', icon: '🍅', onClick: () => { window.dispatchEvent(new CustomEvent('momentum:timer-toggle')); setFabOpen(false) } },
-              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:marks-add')), 0); setFabOpen(false) } },
-              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:calendar-add')), 0); setFabOpen(false) } },
-              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects'); setTimeout(() => window.dispatchEvent(new CustomEvent('momentum:subjects-add')), 0); setFabOpen(false) } },
+              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:marks-add'))); setFabOpen(false) } },
+              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:calendar-add'))); setFabOpen(false) } },
+              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:subjects-add'))); setFabOpen(false) } },
             ].map((action, i) => (
               <div key={i} className="group relative flex items-center">
                 <div className="absolute right-14 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-slate-200 dark:text-slate-800 pointer-events-none">

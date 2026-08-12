@@ -35,34 +35,58 @@ function loadTimerState(): PersistedTimerState | null {
  * Compute the number of seconds the timer has been running (or paused) based on
  * the current wall clock. Returns 0 if no timer is running.
  */
-export function getLiveTimerSeconds(): number {
+export function getLiveTimerSeconds(
+  subjects?: { id: string; categoryId: string | null }[],
+  categories?: { id: string; scope: 'academic' | 'nonAcademic' }[]
+): number {
   const state = loadTimerState()
   let total = 0
   if (state) {
-    if (state.mode === 'simple') {
-      if (state.startedAt !== null) {
-        total += state.simplePausedOffset + Math.floor((Date.now() - state.startedAt) / 1000)
-      } else {
-        total += state.simplePausedOffset
+    const scope = subjects && categories ? resolveScope(state.subjectId, subjects, categories) : null
+    // If scope is resolved and NOT academic, skip entirely.
+    if (!subjects || scope === 'academic') {
+      if (state.mode === 'simple') {
+        if (state.startedAt !== null) {
+          total += state.simplePausedOffset + Math.floor((Date.now() - state.startedAt) / 1000)
+        } else {
+          total += state.simplePausedOffset
+        }
+      } else if (state.mode === 'pomodoro' && state.startedAt !== null && state.phaseRemaining !== null) {
+        const elapsed = Math.floor((Date.now() - state.startedAt) / 1000)
+        total += Math.max(0, elapsed)
       }
-    } else if (state.mode === 'pomodoro' && state.startedAt !== null && state.phaseRemaining !== null) {
-      const elapsed = Math.floor((Date.now() - state.startedAt) / 1000)
-      total += Math.max(0, elapsed)
     }
   }
-  // Also include QuickTimer state
+  // Also include QuickTimer state — only if academic scope
   const quickRaw = localStorage.getItem('momentum-quick-timer')
   if (quickRaw) {
     try {
-      const quickState = JSON.parse(quickRaw)
-      if (quickState.running && quickState.startedAt) {
-        total += quickState.seconds + Math.floor((Date.now() - quickState.startedAt) / 1000)
-      } else {
-        total += quickState.seconds
+      const quickState = JSON.parse(quickRaw) as { running?: boolean; seconds?: number; startedAt?: number | null; subjectId?: string }
+      const qScope = subjects && categories && quickState.subjectId
+        ? resolveScope(quickState.subjectId, subjects, categories)
+        : null
+      if (!subjects || qScope === 'academic') {
+        if (quickState.running && quickState.startedAt) {
+          total += (quickState.seconds ?? 0) + Math.floor((Date.now() - quickState.startedAt) / 1000)
+        } else {
+          total += quickState.seconds ?? 0
+        }
       }
     } catch {}
   }
   return total
+}
+
+function resolveScope(
+  subjectId: string | undefined | null,
+  subjects: { id: string; categoryId: string | null }[],
+  categories: { id: string; scope: 'academic' | 'nonAcademic' }[]
+): 'academic' | 'nonAcademic' | null {
+  if (!subjectId) return null
+  const subject = subjects.find(s => s.id === subjectId)
+  if (!subject) return null
+  const category = categories.find(c => c.id === subject.categoryId)
+  return category?.scope ?? null
 }
 
 /** Get the subjectId of the currently active timer session. */
@@ -110,12 +134,11 @@ export function formatTotalToday(minutes: number, includeSeconds = false): strin
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
 }
-
 /**
  * Compute total study minutes for today (local timezone).
  * - Filters to academic scope only
  * - Uses local date boundary (yyyy-MM-dd via format())
- * - Adds live timer seconds from localStorage
+ * - Adds live timer seconds from localStorage (academic-scoped only)
  */
 export function getTotalTodayMinutes(
   sessions: { startAt: string; durationMinutes: number; durationSeconds?: number; deletedAt?: string | null; subjectId: string }[],
@@ -135,17 +158,8 @@ export function getTotalTodayMinutes(
       total += s.durationSeconds != null ? s.durationSeconds / 60 : s.durationMinutes
     }
   }
-  // Add live timer seconds — only if the active timer subject is academic
-  const liveSeconds = getLiveTimerSeconds()
-  const liveSubjectId = getLiveTimerSubjectId()
-  if (liveSubjectId) {
-    const subject = subjects.find(sub => sub.id === liveSubjectId)
-    if (subject) {
-      const category = categories.find(c => c.id === subject.categoryId)
-      if (category?.scope === 'academic') {
-        total += liveSeconds / 60
-      }
-    }
-  }
+  // Add live timer seconds — scope check is done inside getLiveTimerSeconds
+  // when subjects/categories are supplied, so only academic timers count.
+  total += getLiveTimerSeconds(subjects, categories) / 60
   return total
 }

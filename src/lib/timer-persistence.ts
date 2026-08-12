@@ -175,15 +175,17 @@ export function splitSessionAtMidnight(
   const totalMs = end.getTime() - start.getTime()
   const beforeMidnightMs = midnightMs - start.getTime()
   const afterMidnightMs = totalMs - beforeMidnightMs
-
+  // Use the actual elapsed ms for `durationSeconds` so the stored duration
+  // agrees with the `startAt`/`endAt` timestamps. `beforeMinutes`/`afterMinutes`
+  // is floored to whole minutes for the session ID (which is hashed by minute)
+  // but the actual elapsed seconds still travel with the row.
+  const beforeSeconds = Math.max(1, Math.round(beforeMidnightMs / 1000))
+  const afterSeconds = Math.max(1, Math.round(afterMidnightMs / 1000))
   const beforeMinutes = Math.max(1, Math.round(beforeMidnightMs / 60000))
-  const beforeSeconds = Math.max(10, Math.round(beforeMidnightMs / 1000))
   const afterMinutes = Math.max(1, Math.round(afterMidnightMs / 60000))
-  const afterSeconds = Math.max(10, Math.round(afterMidnightMs / 1000))
 
   const beforeId = sessionIdFor(session.startAt, session.subjectId, beforeMinutes)
   const afterId = sessionIdFor(midnightDate.toISOString(), session.subjectId, afterMinutes)
-
   return [
     {
       id: beforeId,

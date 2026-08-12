@@ -213,6 +213,15 @@ export function PomodoroTimer() {
     return saved?.cyclesCompleted ?? 0
   })
   const pomIntervalRef = useRef<number | null>(null)
+  // Guards the phase-transition effect against re-firing. When a phase
+  // completes, the effect sets a new `pomStartedAt`/`pomPhase`; React batches
+  // those updates, but the effect's deps (`pomStartedAt`, `pomSeconds`,
+  // `pomPhase`) change together and the effect re-runs once more with the old
+  // `pomSeconds` still 0 — saving a phantom session. We only transition when
+  // `pomSeconds` genuinely counted down from a positive value to 0 (tracked
+  // via the previous render's value), which also prevents auto-transitioning
+  // a stale timer whose persisted remaining was already 0 on mount.
+  const prevPomSecondsRef = useRef<number>(0)
   // Refs so the interval callback always sees latest values
   const configRef = useRef(config)
   configRef.current = config
@@ -337,7 +346,18 @@ export function PomodoroTimer() {
   // Pomodoro phase transition — fires when phase timer hits 0
   useEffect(() => {
     if (!pomStartedAt) return
-    if (pomSeconds > 0) return
+    if (pomSeconds > 0) {
+      prevPomSecondsRef.current = pomSeconds
+      return
+    }
+    // Re-fire guard: only transition when the countdown genuinely went from
+    // a positive value to 0. This blocks the duplicate effect run that React
+    // schedules in the same render where we transition, and prevents
+    // auto-transitioning a stale timer whose persisted remaining was already 0.
+    if (prevPomSecondsRef.current <= 0) {
+      return
+    }
+    prevPomSecondsRef.current = pomSeconds
     if (configRef.current.soundEnabled) playNotificationSound()
     sendNotification('Momentum', pomPhase === 'focus' ? 'Focus session complete — time for a break!' : 'Break over — back to focus!', 'pomodoro-phase')
     const st = stateRef.current
@@ -688,6 +708,8 @@ export function PomodoroTimer() {
     // tab is already running the same timer, skip the write to avoid
     // duplicates. Reads the latest owner ref (set via the tab lock).
     if (!isOwnerRef.current) return
+    // Guard against saving a session with no subject (M3 fix).
+    if (!session.subjectId) return
     // Split if crosses midnight
     const splits = splitSessionAtMidnight(session)
     // Instant UI update FIRST — show the session without waiting for DB
@@ -750,7 +772,11 @@ export function PomodoroTimer() {
     }
     const oldName = data.subjects.find((s) => s.id === subjectId)?.name ?? 'Unknown'
     const newName = data.subjects.find((s) => s.id === newSubjectId)?.name ?? 'Unknown'
-    const elapsed = mode === 'simple' ? simpleSeconds : currentSeconds
+    // Compute elapsed from the wall clock so a shortcut-triggered change
+    // before a re-render still sees the correct total (M5 fix).
+    const elapsed = mode === 'simple'
+      ? simplePausedOffset + (simpleStartedAt ? Math.floor((Date.now() - simpleStartedAt) / 1000) : 0)
+      : currentSeconds
     if (mode === 'simple') {
       // Save current simple session
       const actualSubjectId = projectId ? (data.projects.find((p) => p.id === projectId && !p.deletedAt)?.subjectId ?? subjectId) : subjectId
@@ -788,10 +814,13 @@ export function PomodoroTimer() {
         if (actualSubjId) {
           const task = taskId ? data.assignments.find((a) => a.id === taskId) : undefined
           const project = projectId ? data.projects.find((p) => p.id === projectId && !p.deletedAt) : undefined
-          const startMs = pomStartedAt
-          const elapsedMs = Date.now() - startMs
-          const partialSeconds = Math.max(10, Math.round(elapsedMs / 1000))
-          const partialMinutes = Math.max(1, Math.round(elapsedMs / 60000))
+        const startMs = pomStartedAt
+        const rawElapsedMs = Date.now() - startMs
+        // Cap at configured focus duration so a paused timer that was resumed
+        // much later doesn't report hours of focus time (M2 fix).
+        const elapsedMs = Math.min(rawElapsedMs, configRef.current.focusMinutes * 60_000)
+        const partialSeconds = Math.max(1, Math.round(elapsedMs / 1000))
+        const partialMinutes = Math.max(1, Math.round(elapsedMs / 60000))
           const start = new Date(startMs)
           const end = new Date()
           const startAt = start.toISOString()

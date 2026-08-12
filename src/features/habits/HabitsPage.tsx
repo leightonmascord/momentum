@@ -3,7 +3,7 @@ import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval, getDay, a
 import { useData } from '../../app/providers'
 import { db } from '../../db/app-db'
 import { loadSettings } from '../../lib/settings-store'
-import { cn, isoNow, sessionLocalDate, softDelete } from '../../lib/utils'
+import { cn, isoNow, sessionLocalDate, softDelete, STREAK_MILESTONES } from '../../lib/utils'
 import { useUndo } from '../../lib/use-undo'
 import { Button } from '../../components/ui/Button'
 import { Card, CardHeader, CardTitle } from '../../components/ui/Card'
@@ -16,7 +16,6 @@ import type { Habit, HabitLog } from '../../domain/types'
 
 const DEFAULT_COLOR = '#6366f1'
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const STREAK_MILESTONES = [7, 14, 21, 30, 66, 100] as const
 
 
 export default function HabitsPage() {

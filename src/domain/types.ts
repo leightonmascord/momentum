@@ -213,6 +213,9 @@ export interface ActivityLog {
   status: 'completed' | 'skipped' | 'pending'
   actualMinutes?: number
   createdAt: string
+  /** Set when an attendance confirmation created a session. Used by untick
+   * to look up the exact session id instead of re-deriving it. */
+  sessionId?: string
 }
 
 // Study Areas — FSRS-based spaced repetition for conceptual topics

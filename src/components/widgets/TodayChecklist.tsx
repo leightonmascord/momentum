@@ -116,6 +116,19 @@ export function TodayChecklist() {
     } else {
       const activity = row.data
       const mins = activity.dayMinutes[todayDow] ?? activity.duration ?? 0
+      const sessionStartAt = new Date(Date.now() - mins * 60_000).toISOString()
+      const session: Session | null = activity.createsSession && activity.subjectId && mins > 0
+        ? {
+            id: sessionIdFor(sessionStartAt, activity.subjectId, mins),
+            subjectId: activity.subjectId,
+            startAt: sessionStartAt,
+            endAt: new Date().toISOString(),
+            durationMinutes: mins,
+            source: 'autoRoutine',
+            createdAt: isoNow(),
+            updatedAt: isoNow(),
+          }
+        : null
       const log: ActivityLog = {
         id: row.log?.id ?? uuid(),
         activityId: activity.id,
@@ -123,20 +136,7 @@ export function TodayChecklist() {
         status: 'completed',
         actualMinutes: mins,
         createdAt: row.log?.createdAt ?? isoNow(),
-      }
-      let session: Session | null = null
-      if (activity.createsSession && activity.subjectId && mins > 0) {
-        const startAt = new Date(Date.now() - mins * 60_000).toISOString()
-        session = {
-          id: sessionIdFor(startAt, activity.subjectId, mins),
-          subjectId: activity.subjectId,
-          startAt,
-          endAt: new Date().toISOString(),
-          durationMinutes: mins,
-          source: 'autoRoutine',
-          createdAt: isoNow(),
-          updatedAt: isoNow(),
-        }
+        sessionId: row.log?.sessionId ?? session?.id,
       }
       mutate(prev => ({
         ...prev,
@@ -268,9 +268,13 @@ export function TodayChecklist() {
       const removedLog = row.log
       const activitySubjectId = row.data.subjectId
       const mins = removedLog.actualMinutes ?? 0
-      const session = (activitySubjectId && mins > 0
-        ? data.sessions.find(s => s.id === sessionIdFor(removedLog.createdAt, activitySubjectId, mins))
-        : null) ?? null
+      // Prefer the persisted sessionId on the log (H2 fix); fall back to the
+      // old derivation for logs created before this field was added.
+      const session = removedLog.sessionId
+        ? data.sessions.find(s => s.id === removedLog.sessionId) ?? null
+        : (activitySubjectId && mins > 0
+          ? data.sessions.find(s => s.id === sessionIdFor(removedLog.createdAt, activitySubjectId, mins))
+          : null) ?? null
       mutate(prev => ({
         ...prev,
         activityLogs: prev.activityLogs.filter(l => l.id !== removedLog.id),

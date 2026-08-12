@@ -181,7 +181,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     window.addEventListener('momentum-data-synced', onSynced)
     return () => window.removeEventListener('momentum-data-synced', onSynced)
   }, [loadData])
-  flushPendingDirtyTables()
+  // M8: flush dirty sync tables that were persisted from a previous session.
+  // Moved into useEffect to keep side-effects off the render path.
+  useEffect(() => { void flushPendingDirtyTables() }, [])
   const actions = useMemo(
     () => ({ loadData, mutate, scope, rangePreset, setScope, setRangePreset, isLoading: isInitialLoad }),
     [loadData, mutate, scope, rangePreset, setScope, setRangePreset, isInitialLoad],

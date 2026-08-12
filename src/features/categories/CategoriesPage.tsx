@@ -84,38 +84,101 @@ export default function CategoriesPage() {
     try {
       const now = isoNow()
       const catId = deleteConfirm.id
-      // Capture subjects that will be soft-deleted so we can restore them on undo.
+      // Capture the records we'll soft-delete so undo/redo can restore them.
       const affectedSubjects = data.subjects
         .filter((s) => s.categoryId === catId && !s.deletedAt)
         .map((s) => ({ id: s.id, prevDeletedAt: s.deletedAt ?? null }))
-      await db.categories.update(catId, { deletedAt: now, updatedAt: now })
-      for (const subj of affectedSubjects) {
-        await db.subjects.update(subj.id, { deletedAt: now, updatedAt: now })
-      }
+      const affectedSubjectIds = new Set(affectedSubjects.map(s => s.id))
+      // Cascade: projects under those subjects, and every session/assignment
+      // pointing at those projects OR directly at those subjects.
+      const affectedProjects = data.projects
+        .filter(p => !p.deletedAt && affectedSubjectIds.has(p.subjectId))
+        .map(p => ({ id: p.id, prevDeletedAt: p.deletedAt ?? null }))
+      const affectedProjectIds = new Set(affectedProjects.map(p => p.id))
+      const affectedSessions = data.sessions
+        .filter(s => !s.deletedAt && (affectedSubjectIds.has(s.subjectId) || (s.projectId && affectedProjectIds.has(s.projectId))))
+        .map(s => ({ id: s.id, prevDeletedAt: s.deletedAt ?? null }))
+      const affectedAssignments = data.assignments
+        .filter(a => !a.deletedAt && (affectedSubjectIds.has(a.subjectId) || (a.projectId && affectedProjectIds.has(a.projectId))))
+        .map(a => ({ id: a.id, prevDeletedAt: a.deletedAt ?? null }))
+
+      // Wrap the cascade in a single Dexie transaction for atomicity.
+      await db.transaction(
+        'rw',
+        [db.categories, db.subjects, db.projects, db.sessions, db.assignments],
+        async () => {
+          await db.categories.update(catId, { deletedAt: now, updatedAt: now })
+          for (const subj of affectedSubjects) {
+            await db.subjects.update(subj.id, { deletedAt: now, updatedAt: now })
+          }
+          for (const proj of affectedProjects) {
+            await db.projects.update(proj.id, { deletedAt: now, updatedAt: now })
+          }
+          for (const sess of affectedSessions) {
+            await db.sessions.update(sess.id, { deletedAt: now, updatedAt: now })
+          }
+          for (const asgn of affectedAssignments) {
+            await db.assignments.update(asgn.id, { deletedAt: now, updatedAt: now })
+          }
+        }
+      )
       await loadData()
       const originalCat = { ...deleteConfirm }
       const subjectCount = affectedSubjects.length
+      const projectCount = affectedProjects.length
+      const sessionCount = affectedSessions.length
+      const assignmentCount = affectedAssignments.length
+      const descParts: string[] = [`Deleted category "${originalCat.name}"`]
+      if (subjectCount > 0) descParts.push(`${subjectCount} focus area${subjectCount === 1 ? '' : 's'}`)
+      if (projectCount > 0) descParts.push(`${projectCount} project${projectCount === 1 ? '' : 's'}`)
+      if (sessionCount > 0) descParts.push(`${sessionCount} session${sessionCount === 1 ? '' : 's'}`)
+      if (assignmentCount > 0) descParts.push(`${assignmentCount} task${assignmentCount === 1 ? '' : 's'}`)
       push({
-        description:
-          subjectCount === 0
-            ? `Deleted category "${originalCat.name}"`
-            : `Deleted category "${originalCat.name}" and ${subjectCount} focus area${subjectCount === 1 ? '' : 's'}`,
+        description: descParts.join(' and '),
         undo: async () => {
-          await db.categories.update(originalCat.id, { deletedAt: null, updatedAt: isoNow() })
-          for (const subj of affectedSubjects) {
-            await db.subjects.update(subj.id, {
-              deletedAt: subj.prevDeletedAt,
-              updatedAt: isoNow(),
-            })
-          }
+          const t = isoNow()
+          await db.transaction(
+            'rw',
+            [db.categories, db.subjects, db.projects, db.sessions, db.assignments],
+            async () => {
+              await db.categories.update(catId, { deletedAt: null, updatedAt: t })
+              for (const subj of affectedSubjects) {
+                await db.subjects.update(subj.id, { deletedAt: subj.prevDeletedAt, updatedAt: t })
+              }
+              for (const proj of affectedProjects) {
+                await db.projects.update(proj.id, { deletedAt: proj.prevDeletedAt, updatedAt: t })
+              }
+              for (const sess of affectedSessions) {
+                await db.sessions.update(sess.id, { deletedAt: sess.prevDeletedAt, updatedAt: t })
+              }
+              for (const asgn of affectedAssignments) {
+                await db.assignments.update(asgn.id, { deletedAt: asgn.prevDeletedAt, updatedAt: t })
+              }
+            }
+          )
           await loadData()
         },
         redo: async () => {
           const redoNow = isoNow()
-          await db.categories.update(originalCat.id, { deletedAt: redoNow, updatedAt: redoNow })
-          for (const subj of affectedSubjects) {
-            await db.subjects.update(subj.id, { deletedAt: redoNow, updatedAt: redoNow })
-          }
+          await db.transaction(
+            'rw',
+            [db.categories, db.subjects, db.projects, db.sessions, db.assignments],
+            async () => {
+              await db.categories.update(catId, { deletedAt: redoNow, updatedAt: redoNow })
+              for (const subj of affectedSubjects) {
+                await db.subjects.update(subj.id, { deletedAt: redoNow, updatedAt: redoNow })
+              }
+              for (const proj of affectedProjects) {
+                await db.projects.update(proj.id, { deletedAt: redoNow, updatedAt: redoNow })
+              }
+              for (const sess of affectedSessions) {
+                await db.sessions.update(sess.id, { deletedAt: redoNow, updatedAt: redoNow })
+              }
+              for (const asgn of affectedAssignments) {
+                await db.assignments.update(asgn.id, { deletedAt: redoNow, updatedAt: redoNow })
+              }
+            }
+          )
           await loadData()
         },
       })

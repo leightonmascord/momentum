@@ -46,10 +46,10 @@ function loadPrefs(): NavPrefs {
   try {
     const version = Number(localStorage.getItem(PREFS_VERSION_KEY))
     if (version < CURRENT_PREFS_VERSION) {
+      // Bump the stored version to avoid re-entering on every render, but do
+      // NOT wipe the user's saved preferences.  Existing order is preserved via
+      // `applyPrefs` which merges in new items and drops unknowns.
       localStorage.setItem(PREFS_VERSION_KEY, String(CURRENT_PREFS_VERSION))
-      localStorage.setItem('momentum-nav-just-reset', 'true')
-      savePrefs(DEFAULT_PREFS)
-      return { ...DEFAULT_PREFS }
     }
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return { ...DEFAULT_PREFS }

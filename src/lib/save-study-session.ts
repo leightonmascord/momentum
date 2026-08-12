@@ -83,14 +83,14 @@ export function buildTodaySubjectBreakdown(
   for (const s of sessions) {
     if (s.deletedAt) continue
     if (sessionLocalDate(s.startAt) !== todayStr) continue
-    const subj = subjects.find((x) => x.id === s.subjectId)
+    const subj = subjects.find((x) => x.id === s.subjectId && !x.deletedAt)
     if (!subj) continue
     const existing = map.get(s.subjectId)
     const minutes = (existing?.minutes ?? 0) + s.durationMinutes
     map.set(s.subjectId, { subjectId: s.subjectId, subjectName: subj.name, minutes, color: subj.color })
   }
   if (liveSubjectId && liveMinutes && liveMinutes > 0) {
-    const subj = subjects.find((x) => x.id === liveSubjectId)
+    const subj = subjects.find((x) => x.id === liveSubjectId && !x.deletedAt)
     if (subj) {
       const existing = map.get(liveSubjectId)
       const minutes = (existing?.minutes ?? 0) + liveMinutes

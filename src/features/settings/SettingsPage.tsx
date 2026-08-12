@@ -13,69 +13,9 @@ import { useCompactMode } from '../../lib/use-compact-mode'
 import { useHighContrast } from '../../lib/use-high-contrast'
 import { requestNotificationPermission } from '../../lib/notification-service'
 import { VERSION } from '../../lib/version'
-const STORAGE_KEY = 'momentum-settings'
+import { loadSettings, saveSettings, applyDarkMode } from '../../lib/settings-store'
+import type { Settings } from '../../lib/settings-store'
 
-export type Settings = {
-  darkMode: boolean
-  pomodoroEnabled: boolean
-  autoLogEnabled: boolean
-  pomodoroFocusMinutes: number
-  pomodoroBreakMinutes: number
-  pomodoroLongBreakMinutes: number
-  pomodoroCyclesBeforeLongBreak: number
-  dailyTargetMinutes: number
-  soundEnabled: boolean
-  maxActiveHabits: number
-  defaultArchiveDays: number
-  settingsUpdatedAt: string
-  devMode?: boolean
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  darkMode: true,
-  pomodoroEnabled: true,
-  autoLogEnabled: true,
-  pomodoroFocusMinutes: 25,
-  pomodoroBreakMinutes: 5,
-  pomodoroLongBreakMinutes: 15,
-  pomodoroCyclesBeforeLongBreak: 4,
-  dailyTargetMinutes: 120,
-  soundEnabled: true,
-  maxActiveHabits: 3,
-  defaultArchiveDays: 66,
-  settingsUpdatedAt: '',
-}
-
-
-export function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<Settings>
-      // Older stored blobs may not have settingsUpdatedAt; merge preserves defaults
-      return { ...DEFAULT_SETTINGS, ...parsed }
-    }
-  } catch (e) { /* ignore */ }
-  // First run / no saved settings: respect the OS dark mode preference
-  const osPrefersDark =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-color-scheme: dark)').matches
-  return { ...DEFAULT_SETTINGS, darkMode: osPrefersDark }
-}
-
-export function saveSettings(settings: Settings) {
-  // Do not mutate the caller's object. Create a copy with an updated timestamp
-  const toSave: Settings = { ...settings, settingsUpdatedAt: new Date().toISOString() }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
-}
-
-export function applyDarkMode(enabled: boolean) {
-  if (enabled) {
-    document.documentElement.classList.add('dark')
-  } else {
-    document.documentElement.classList.remove('dark')
-  }
-}
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -850,7 +790,7 @@ export default function SettingsPage() {
               variant="danger"
               disabled={resetInput !== 'RESET'}
               onClick={() => {
-                localStorage.removeItem(STORAGE_KEY)
+                localStorage.removeItem('momentum-settings')
                 window.location.reload()
               }}
             >

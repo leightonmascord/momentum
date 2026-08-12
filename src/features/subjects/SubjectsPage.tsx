@@ -11,6 +11,8 @@ import { Modal } from '../../components/ui/Modal'
 import { PageSpinner } from '../../components/ui/Spinner'
 import { ColorPicker } from '../../components/ui/ColorPicker'
 import { useUndo } from '../../lib/use-undo'
+import { sessionLocalDate } from '../../lib/utils'
+import { recomputeStreakDaysForDates } from '../../lib/routine-tracker'
 import type { Subject } from '../../domain/types'
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -138,25 +140,37 @@ export default function SubjectsPage() {
       }
       collectChildren(subjId)
 
-      // Soft-delete the subject and all children
-      await db.subjects.update(subjId, { deletedAt, updatedAt })
-      for (const childId of allChildIds) {
-        await db.subjects.update(childId, { deletedAt, updatedAt })
-      }
-      // Cascade to projects, sessions, and assignments for subject + all children
+
+      // Cascade in a single transaction for atomicity + performance (L11).
       const allSubjectIds = [subjId, ...allChildIds]
+      // Read affected records BEFORE entering the transaction so we can
+      // capture their pre-delete state for the undo handler.
       const prevProjects = await db.projects.where('subjectId').anyOf(allSubjectIds).toArray()
-      for (const p of prevProjects) {
-        await db.projects.update(p.id, { deletedAt, updatedAt })
-      }
       const prevSessions = await db.sessions.where('subjectId').anyOf(allSubjectIds).toArray()
-      for (const s of prevSessions) {
-        await db.sessions.update(s.id, { deletedAt, updatedAt })
-      }
       const prevAssignments = await db.assignments.where('subjectId').anyOf(allSubjectIds).toArray()
-      for (const a of prevAssignments) {
-        await db.assignments.update(a.id, { deletedAt, updatedAt })
-      }
+      await db.transaction(
+        'rw',
+        [db.subjects, db.projects, db.sessions, db.assignments],
+        async () => {
+          await db.subjects.update(subjId, { deletedAt, updatedAt })
+          for (const childId of allChildIds) {
+            await db.subjects.update(childId, { deletedAt, updatedAt })
+          }
+          for (const p of prevProjects) {
+            await db.projects.update(p.id, { deletedAt, updatedAt })
+          }
+          for (const s of prevSessions) {
+            await db.sessions.update(s.id, { deletedAt, updatedAt })
+          }
+          for (const a of prevAssignments) {
+            await db.assignments.update(a.id, { deletedAt, updatedAt })
+          }
+        }
+      )
+      // Recompute streak days for every date that had a cascaded session, so
+      // the now-deleted minutes stop counting toward the daily goal (H6).
+      const affectedDates = new Set(prevSessions.map(s => sessionLocalDate(s.startAt)))
+      await recomputeStreakDaysForDates(Array.from(affectedDates))
       await loadData()
       setDeleteSubject(null)
       const totalItems = allChildIds.length + prevProjects.length + prevSessions.length + prevAssignments.length
