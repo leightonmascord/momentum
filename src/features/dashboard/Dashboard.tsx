@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { TodaysRoutinesList } from '../../components/widgets/TodaysRoutinesList'
 import { TodayChecklist } from '../../components/widgets/TodayChecklist'
 import { ActivityConfirmationCard } from '../../components/widgets/ActivityConfirmationCard'
@@ -117,6 +117,14 @@ function copySessionInfo(session: Session & { subjectName: string }) {
   const src = session.source === 'timer' ? 'timer' : session.source === 'pomodoro' ? 'pomodoro' : session.source === 'quickLog' ? 'quick log' : session.source === 'autoRoutine' ? 'routine' : 'manual'
   navigator.clipboard.writeText(`${session.subjectName} · ${formatMinutes(session.durationMinutes)} · ${time} · ${src}`).catch(() => {})
 }
+// Ref-based tracking of which column the pointer is over during a drag.
+// Bridged into React via useSyncExternalStore so liveColumnItems can read
+// the latest value for preview injection without triggering a re-render
+// on every pointer move (which was the source of the earlier flicker).
+const overColumn$ = { current: null as number | null }
+const overId$ = { current: null as string | null }
+function subscribeDragHover(cb: () => void) { window.addEventListener('draghover', cb); return () => window.removeEventListener('draghover', cb) }
+function emitDragHover() { window.dispatchEvent(new Event('draghover')) }
 // Bottom-of-column drop target. Rendered as a real droppable so users can
 // drop a widget at the end of any column (including empty columns). Only
 // visible while a drag is in progress.
@@ -265,7 +273,7 @@ export default function Dashboard() {
   const [showCelebration, setShowCelebration] = useState(false)
   const navigate = useNavigate()
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [overColumn, setOverColumn] = useState<number | null>(null)
+  const overColumn = useSyncExternalStore(subscribeDragHover, () => overColumn$.current)
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Measured freeform container width, so widgets can use the full viewport
   // on wide monitors instead of being capped at a hardcoded 1200px.
@@ -314,21 +322,22 @@ export default function Dashboard() {
     }
     return widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
   }
-
-  // Widgets that currently live in the given column. We do NOT inject the
-  // dragged widget into a target column here: doing so causes a feedback
-  // oscillation (inserting a preview shifts the widget under the cursor,
-  // which moves the insertion point, which shifts widgets again) that
-  // reads as flicker. Cross-column drop feedback comes from the column
-  // highlight, the floor drop zones, and the DragOverlay — the actual move
-  // happens once in handleDragEnd. Within a column, dnd-kit's own
-  // verticalListSortingStrategy handles smooth reordering around the active
-  // widget without any extra items.
-  function liveColumnItems(colIdx: number): string[] {
-    return visibleWidgets.filter(
-      (id) => (widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0) === colIdx
-    )
-  }
+  // Memoized per-column item lists. Crucial: returning a NEW array reference
+  // on every render would make dnd-kit's useSortable see "items changed" (it
+  // does a reference compare) and re-measure, re-animating the 200ms transform
+  // transition — which reads as flicker. By memoizing on the actual content
+  // (visibleWidgets + widgetConfigs), the array reference is stable across
+  // renders during a drag, so SortableContext never re-registers and the
+  // same-column reorder stays smooth.
+  const columnItems = useMemo(() => {
+    const cols: string[][] = [[], [], []]
+    for (const id of visibleWidgets) {
+      const c = widgetConfigs[id]?.column ?? DEFAULT_CONFIGS[id]?.column ?? 0
+      cols[c] = cols[c] || []
+      cols[c].push(id)
+    }
+    return cols
+  }, [visibleWidgets, widgetConfigs])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -1714,27 +1723,52 @@ export default function Dashboard() {
         collisionDetection={pointerWithin}
         onDragStart={(event) => {
           setActiveId(event.active.id as string)
-          setOverColumn(null)
+          overColumn$.current = null
+          overId$.current = null
+          emitDragHover()
         }}
         onDragOver={(event) => {
           const overId = event.over ? (event.over.id as string) : null
-          setOverColumn(overId ? columnFor(overId) : null)
+          const prevCol = overColumn$.current
+          const prevId = overId$.current
+          overId$.current = overId
+          overColumn$.current = overId ? columnFor(overId) : null
+          // Emit when the column changes OR the hovered widget changes, so the
+          // target column's placeholder tracks the pointer. SortableContext
+          // items are memoized (columnItems), so re-rendering here does not
+          // re-register the context and does not re-trigger the transform
+          // transitions — that was the source of the earlier flicker.
+          if (overColumn$.current !== prevCol || overId$.current !== prevId) emitDragHover()
         }}
         onDragEnd={(event) => {
           setActiveId(null)
-          setOverColumn(null)
+          overId$.current = null
+          overColumn$.current = null
+          emitDragHover()
           handleDragEnd(event)
         }}
         onDragCancel={() => {
           setActiveId(null)
-          setOverColumn(null)
+          overId$.current = null
+          overColumn$.current = null
+          emitDragHover()
         }}
       >
         {layoutMode === 'grid' ? (
           <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 items-start">
             {[0, 1, 2].map((colIdx) => {
-              const colItems = liveColumnItems(colIdx)
+              const colItems = columnItems[colIdx]
               const isTarget = overColumn === colIdx
+              // Cross-column target: compute where to drop the preview slot.
+              const showPlaceholder = isTarget && !!activeId && widgetConfigs[activeId]?.column !== colIdx
+              const insertIdx = showPlaceholder
+                ? (() => {
+                    const oid = overId$.current
+                    if (!oid || oid === activeId || oid.startsWith(FLOOR_PREFIX)) return colItems.length
+                    const i = colItems.indexOf(oid)
+                    return i === -1 ? colItems.length : i
+                  })()
+                : -1
               return (
                 <SortableContext
                   key={colIdx}
@@ -1750,25 +1784,34 @@ export default function Dashboard() {
                       isTarget && activeId && 'bg-primary-50/60 ring-1 ring-primary-300 dark:bg-primary-900/10 dark:ring-primary-700'
                     )}
                   >
-                    {colItems.map(id => {
-                      const cols = widgetConfigs[id]?.cols ?? 1
-                      const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-                      const label = meta?.label || id
-                      return (
-                        <div key={id} className="break-inside-avoid">
+                    {colItems.map((id, i) => (
+                      <Fragment key={id}>
+                        {showPlaceholder && insertIdx === i && (
+                          <div
+                            className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/50 dark:border-primary-700 dark:bg-primary-900/20"
+                            style={{ minHeight: 64 }}
+                          />
+                        )}
+                        <div className="break-inside-avoid">
                           <DashboardWidget
                             id={id}
-                            label={label}
+                            label={DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id}
                             mode="grid"
-                            cols={cols}
+                            cols={widgetConfigs[id]?.cols ?? 1}
                             onResizeGrid={(c) => setWidgetSize(id, c, 1)}
                             onRemove={() => removeWidgetWithUndo(id)}
                           >
                             {renderWidget(id)}
                           </DashboardWidget>
                         </div>
-                      )
-                    })}
+                      </Fragment>
+                    ))}
+                    {showPlaceholder && insertIdx >= colItems.length && (
+                      <div
+                        className="rounded-lg border-2 border-dashed border-primary-300 bg-primary-50/50 dark:border-primary-700 dark:bg-primary-900/20"
+                        style={{ minHeight: 64 }}
+                      />
+                    )}
                     <ColumnFloor colIdx={colIdx} active={!!activeId} isTarget={isTarget} />
                   </div>
                 </SortableContext>
