@@ -11,7 +11,7 @@ const BEST_STREAK_KEY = 'momentum-best-streak';
  * @param sessions - Array of Session objects (typically already filtered to academic & non-deleted)
  * @returns { streak: number, longestStreak: number, bestStreak: number }
  */
-export function useStreak(sessions: Session[]) {
+export function useStreak(sessions: Session[], previewDates: Set<string> = new Set()) {
   // Current streak: consecutive days up to today. One gap (missed day)
   // is allowed per chain — the next logged day after a gap continues
   // the streak. Two consecutive missed days break it. The `missed`
@@ -23,6 +23,7 @@ export function useStreak(sessions: Session[]) {
     for (const s of sessions) {
       daySet.add(toLocalDateString(s.startAt));
     }
+    for (const d of previewDates) daySet.add(d)
     let count = 0;
     let missed = 0;
     let d = new Date();
@@ -39,7 +40,7 @@ export function useStreak(sessions: Session[]) {
       }
     }
     return count;
-  }, [sessions]);
+  }, [sessions, previewDates]);
 
   // Longest streak ever in the dataset — uses the SAME one-gap-per-chain
   // rule as the current streak above (L3 fix: old code incremented `cur`

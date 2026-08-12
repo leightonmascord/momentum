@@ -21,6 +21,7 @@ import { useSwipe } from '../../lib/use-swipe'
 import { cn, formatMinutes, getSessionScope, getSubjectPathLabel, isoNow, toLocalDateString, STREAK_MILESTONES } from '../../lib/utils'
 import { loadSettings } from '../../lib/settings-store'
 import { useStreak } from '../../lib/use-streak'
+import { useStreakPreviewDates } from '../../lib/streak-preview'
 import { db } from '../../db/app-db'
 import { updateRoutineLogsForSession, revertRoutineLogsForSession, updateStreakDayForSession, revertStreakDayForSession } from '../../lib/routine-tracker'
 import { sessionIdFor } from '../../lib/timer-persistence'
@@ -316,8 +317,7 @@ export default function Dashboard() {
     [academicSessions, todayStr]
   )
   const settings = useMemo(() => loadSettings(), [])
-
-  const { streak, longestStreak } = useStreak(academicSessions)
+  const { streak, longestStreak } = useStreak(academicSessions, useStreakPreviewDates())
   // Celebration: trigger once per day when the daily goal is met or a streak
   // milestone is reached today. Guarded by localStorage so it only fires once.
   useEffect(() => {

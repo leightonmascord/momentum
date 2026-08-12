@@ -29,6 +29,7 @@ export interface PendingSession {
   subjectId: string
   projectId: string | null
   assignmentId: string | null
+  routineId?: string | null
   startAt: string
   endAt: string
   durationMinutes: number
@@ -83,6 +84,8 @@ export interface PersistedTimerState {
   notes?: string
   /** Focus quality tag for the active session. */
   focusTag?: 'focused' | 'distracted' | 'group' | 'revision'
+  /** Routine the active session is being logged toward (optional). */
+  routineId?: string | null
 }
 export function saveTimerState(state: PersistedTimerState): void {
   try {

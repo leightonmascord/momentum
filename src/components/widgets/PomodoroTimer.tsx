@@ -17,6 +17,7 @@ import { groupService } from '../../lib/group-service'
 import { pushSettings } from '../../lib/settings-sync'
 import { sendNotification, requestNotificationPermission } from '../../lib/notification-service'
 import { useTimerTabLock } from '../../lib/use-timer-tab-lock'
+import { clearStreakPreviewDates, setTodayPreview } from '../../lib/streak-preview'
 type Mode = 'pomodoro' | 'simple'
 const LAST_SUBJECT_KEY = 'momentum-last-subject'
 const SAFETY_LIMIT_HOURS = 12
@@ -130,6 +131,7 @@ export function PomodoroTimer() {
   const [subjectId, setSubjectId] = useState<string>('')
   const [projectId, setProjectId] = useState<string>('')
   const [taskId, setTaskId] = useState<string>('')
+  const [timerRoutineId, setTimerRoutineId] = useState<string>('')
   const [changeSubjectOpen, setChangeSubjectOpen] = useState(false)
   const [changeSubjectConfirmation, setChangeSubjectConfirmation] = useState('')
   const changeSubjectConfirmationTimer = useRef<number | null>(null)
@@ -146,10 +148,22 @@ export function PomodoroTimer() {
   const selectedParentId = selectedParentSubject?.id ?? ''
   const availableProjects = data.projects.filter((p) => p.subjectId === subjectId && !p.deletedAt)
   const availableTasks = data.assignments.filter((a) => a.projectId === projectId && !a.completed && !a.deletedAt)
-  // Restore notes from persisted timer state on mount
+  // Routines scheduled for today that match the selected subject (or any subject
+  // when none is selected). Lets the user log timer time toward a routine.
+  const todayDow = new Date().getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6
+  const availableRoutines = data.routines.filter((r) => {
+    if (r.deletedAt) return false
+    if (!(r.dayMinutes[todayDow] ?? 0)) return false
+    if (subjectId && r.subjectId !== subjectId) return false
+    return true
+  }).sort((a, b) => a.name.localeCompare(b.name))
+  // Restore notes + routineId from persisted timer state on mount
   useEffect(() => {
     const stored = loadTimerState()
-    if (stored) setTimerNotes(stored.notes ?? '')
+    if (stored) {
+      setTimerNotes(stored.notes ?? '')
+      if (stored.routineId) setTimerRoutineId(stored.routineId)
+    }
   }, [])
 
 
@@ -269,6 +283,7 @@ export function PomodoroTimer() {
         subjectId: pending.subjectId,
         projectId: pending.projectId,
         assignmentId: pending.assignmentId,
+        routineId: pending.routineId ?? null,
         startAt: pending.startAt,
         endAt: pending.endAt,
         durationMinutes: pending.durationMinutes,
@@ -303,7 +318,6 @@ export function PomodoroTimer() {
     simpleSafetyFiredRef.current = false
     const tick = () => {
       const elapsed = simplePausedOffset + Math.floor((Date.now() - simpleStartedAt) / 1000)
-      setSimpleSeconds(elapsed)
       // 12-hour safety guard — warn and auto-pause if elapsed exceeds limit
       if (elapsed >= SAFETY_LIMIT_SECONDS && !simpleSafetyFiredRef.current) {
         simpleSafetyFiredRef.current = true
@@ -380,6 +394,7 @@ export function PomodoroTimer() {
           subjectId: actualSubjId,
           projectId: project?.id ?? null,
           assignmentId: task?.id ?? null,
+          routineId: timerRoutineId || null,
           startAt,
           endAt: end.toISOString(),
           durationMinutes,
@@ -390,6 +405,7 @@ export function PomodoroTimer() {
           createdAt: isoNow(),
           updatedAt: isoNow(),
         })
+        clearStreakPreviewDates()
       }
       const newCycles = st.pomCycles + 1
       setPomCycles(newCycles)
@@ -466,6 +482,7 @@ export function PomodoroTimer() {
             subjectId: actualSubjId,
             projectId: project?.id ?? null,
             assignmentId: task?.id ?? null,
+            routineId: timerRoutineId || null,
             startAt,
             endAt: now.toISOString(),
             durationMinutes,
@@ -492,6 +509,7 @@ export function PomodoroTimer() {
             subjectId: actualSubjId,
             projectId: project?.id ?? null,
             assignmentId: task?.id ?? null,
+            routineId: timerRoutineId || null,
             startAt,
             endAt: end.toISOString(),
             durationMinutes,
@@ -624,8 +642,11 @@ export function PomodoroTimer() {
     setSafetyMessage('')
     simpleSafetyFiredRef.current = false
     lastSavedCumulativeRef.current = 0
-    void null
     void requestNotificationPermission()
+    // Optimistic streak preview — show the user the streak goes up as soon
+    // as they start. The real session will replace this on stop.
+    setTodayPreview(true)
+    void null
     const now = Date.now()
     setSimpleStartedAt(now)
     const state: PersistedTimerState = {
@@ -639,6 +660,7 @@ export function PomodoroTimer() {
       config: configRef.current,
       simplePausedOffset: simplePausedOffset,
       notes: timerNotes,
+      routineId: timerRoutineId || undefined,
     }
     saveTimerState(state)
     if (subjectId) localStorage.setItem(LAST_SUBJECT_KEY, subjectId)
@@ -660,6 +682,7 @@ export function PomodoroTimer() {
       config: configRef.current,
       simplePausedOffset: elapsed,
       notes: timerNotes,
+      routineId: timerRoutineId || undefined,
     }
     saveTimerState(state)
     // Presence is managed centrally by the `isRunning` effect above.
@@ -680,6 +703,7 @@ export function PomodoroTimer() {
       config: configRef.current,
       simplePausedOffset: simplePausedOffset,
       notes: timerNotes,
+      routineId: timerRoutineId || undefined,
     }
     saveTimerState(state)
   }
@@ -694,6 +718,7 @@ export function PomodoroTimer() {
     subjectId: string
     projectId: string | null
     assignmentId: string | null
+    routineId: string | null
     startAt: string
     endAt: string
     durationMinutes: number
@@ -744,6 +769,7 @@ export function PomodoroTimer() {
         subjectId: actualSubjectId,
         projectId: project?.id ?? null,
         assignmentId: task?.id ?? null,
+        routineId: timerRoutineId || null,
         startAt,
         endAt: now.toISOString(),
         durationMinutes,
@@ -763,6 +789,7 @@ export function PomodoroTimer() {
     setSimpleSeconds(0)
     setTimerNotes('')
     localStorage.removeItem('momentum-timer-notes')
+    clearStreakPreviewDates()
   }
 
   async function changeSubject(newSubjectId: string) {
@@ -794,6 +821,7 @@ export function PomodoroTimer() {
           subjectId: actualSubjectId,
           projectId: project?.id ?? null,
           assignmentId: task?.id ?? null,
+          routineId: timerRoutineId || null,
           startAt,
           endAt: now.toISOString(),
           durationMinutes,
@@ -829,6 +857,7 @@ export function PomodoroTimer() {
             subjectId: actualSubjId,
             projectId: project?.id ?? null,
             assignmentId: task?.id ?? null,
+            routineId: timerRoutineId || null,
             startAt,
             endAt: end.toISOString(),
             durationMinutes: partialMinutes,
@@ -860,6 +889,7 @@ export function PomodoroTimer() {
         cyclesCompleted: 0,
         config: configRef.current,
         notes: timerNotes,
+        routineId: timerRoutineId || undefined,
       }
       saveTimerState(state)
     } else {
@@ -875,6 +905,7 @@ export function PomodoroTimer() {
         cyclesCompleted: pomCycles,
         config: configRef.current,
         notes: timerNotes,
+        routineId: timerRoutineId || undefined,
       }
       saveTimerState(state)
     }
@@ -889,6 +920,7 @@ export function PomodoroTimer() {
     setSafetyMessage('')
     pomSafetyFiredRef.current = false
     void requestNotificationPermission()
+    setTodayPreview(true)
     const now = Date.now()
     setPomStartedAt(now)
     const state: PersistedTimerState = {
@@ -902,6 +934,7 @@ export function PomodoroTimer() {
       cyclesCompleted: pomCycles,
       config: configRef.current,
       notes: timerNotes,
+      routineId: timerRoutineId || undefined,
     }
     saveTimerState(state)
     if (subjectId) localStorage.setItem(LAST_SUBJECT_KEY, subjectId)
@@ -920,6 +953,7 @@ export function PomodoroTimer() {
       cyclesCompleted: pomCycles,
       config: configRef.current,
       notes: timerNotes,
+      routineId: timerRoutineId || undefined,
     }
     saveTimerState(state)
   }
@@ -945,6 +979,7 @@ export function PomodoroTimer() {
           subjectId: actualSubjId,
           projectId: project?.id ?? null,
           assignmentId: task?.id ?? null,
+          routineId: timerRoutineId || null,
           startAt,
           endAt: end.toISOString(),
           durationMinutes: partialMinutes,
@@ -965,6 +1000,7 @@ export function PomodoroTimer() {
     setPomSeconds(config.focusMinutes * 60)
     setTimerNotes('')
     localStorage.removeItem('momentum-timer-notes')
+    clearStreakPreviewDates()
   }
   function discardSession() {
     setSimpleStartedAt(null)
@@ -977,6 +1013,7 @@ export function PomodoroTimer() {
     setSafetyMessage('')
     setShowDiscardConfirm(false)
     clearPendingSession()
+    clearStreakPreviewDates()
     clearTimerState()
     setTimerFocusTag(null)
     setTimerNotes('')
@@ -1274,6 +1311,21 @@ export function PomodoroTimer() {
                   <option value="">— Select task —</option>
                   {availableTasks.map((a) => (
                     <option key={a.id} value={a.id}>{a.title}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {availableRoutines.length > 0 && (
+              <div>
+                <label className="label">Routine (optional)</label>
+                <select
+                  className="input"
+                  value={timerRoutineId}
+                  onChange={(e) => setTimerRoutineId(e.target.value)}
+                >
+                  <option value="">— No routine —</option>
+                  {availableRoutines.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
                   ))}
                 </select>
               </div>

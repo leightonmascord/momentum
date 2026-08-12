@@ -19,25 +19,34 @@ export async function updateRoutineLogsForSession(session: Session): Promise<voi
   const sessionDow = new Date(session.startAt).getDay() as DayOfWeek
 
   const allRoutines = await db.routines.toArray()
-  const matching = allRoutines.filter((r) => {
+  // Auto-match routines scheduled for this day + subject/project.
+  const autoMatch = allRoutines.filter((r) => {
     if (r.deletedAt) return false
     if (!r.dayMinutes[sessionDow] || r.dayMinutes[sessionDow]! <= 0) return false
     if (r.subjectId !== session.subjectId) return false
     if (r.projectId && r.projectId !== session.projectId) return false
     return true
   })
-    // Tag the session with the first matching routine (only if not already tagged)
-    // Only tag auto-routine sessions — manually created sessions should not
-    // be silently assigned to a routine.
-    if (matching.length > 0 && !session.routineId && session.source === 'autoRoutine') {
-      await db.sessions.update(session.id, { routineId: matching[0].id, updatedAt: isoNow() })
-    }
+  // Only tag auto-routine sessions — manually created sessions should not
+  // be silently assigned to a routine.
+  if (autoMatch.length > 0 && !session.routineId && session.source === 'autoRoutine') {
+    await db.sessions.update(session.id, { routineId: autoMatch[0].id, updatedAt: isoNow() })
+  }
 
-  if (matching.length === 0) return
+  // If the session explicitly picked a routine (e.g. via the study timer),
+  // add it to the set to log toward — even if its schedule doesn't include
+  // today. The user chose it deliberately.
+  const explicit = session.routineId
+    ? allRoutines.filter((r) => r.id === session.routineId && !r.deletedAt)
+    : []
+  const toLog = [...autoMatch]
+  for (const r of explicit) {
+    if (!toLog.some((x) => x.id === r.id)) toLog.push(r)
+  }
+  if (toLog.length === 0) return
 
-  // Find existing log per matching routine
   const logs = await db.routineLogs.toArray()
-  for (const routine of matching) {
+  for (const routine of toLog) {
     const existing = logs.find((l) => l.routineId === routine.id && l.date === sessionDate)
     const addedMinutes = existing
       ? existing.actualMinutes + session.durationMinutes
