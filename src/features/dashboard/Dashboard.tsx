@@ -30,29 +30,23 @@ import { useSessionSync } from '../../lib/use-session-sync'
 import type { Session, DayOfWeek, RoutineLog, Routine, Activity, ActivityLog } from '../../domain/types'
 import { Link, useNavigate } from 'react-router-dom'
 import { DashboardWidget } from '../../components/widgets/DashboardWidget'
-import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS, DEFAULT_FREEFORM_SIZE } from '../../lib/use-dashboard-widgets'
+import { useDashboardWidgets, DASHBOARD_WIDGETS_METADATA, DEFAULT_CONFIGS, DEFAULT_WIDGET_IDS } from '../../lib/use-dashboard-widgets'
 import { overColumn$, overId$, activeWidgetSize$, subscribeDragHover, emitDragHover, resetDragState } from '../../lib/dashboard-drag-store'
-import { FreeformWidget } from '../../components/widgets/FreeformWidget'
 import { DndContext, PointerSensor, useSensor, useSensors, pointerWithin, useDroppable, type DragEndEvent, DragOverlay } from '@dnd-kit/core'
 import { useSortable, SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { SessionDetailsModal } from '../../components/ui/SessionDetailsModal'
 function CustomizeRow({
-  id, label, visible, layoutMode, cols, config, onToggle, onSetSize, onSetPx,
+  id, label, visible, cols, onToggle, onSetSize,
 }: {
   id: string
   label: string
   visible: boolean
-  layoutMode: 'grid' | 'freeform'
   cols: number
-  config: { height?: number } | undefined
   onToggle: () => void
   onSetSize: (cols: number) => void
-  onSetPx: (px: { height?: number }) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
-  const height = config?.height ?? defaults.height
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? 'none',
@@ -87,28 +81,12 @@ function CustomizeRow({
         aria-label={visible ? `Hide ${label}` : `Show ${label}`}
       />
       <span className={cn('flex-1 text-sm min-w-[8rem]', !visible && 'text-slate-400 dark:text-slate-500')}>{label}</span>
-      {layoutMode === 'grid' ? (
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-slate-500">Width</span>
-          <button onClick={() => onSetSize(cols - 1)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
-          <span className="text-xs w-6 text-center">{cols}</span>
-          <button onClick={() => onSetSize(cols + 1)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-slate-500">Size</span>
-          <input
-            type="number"
-            min={160}
-            max={1600}
-            value={height}
-            onChange={(e) => onSetPx({ height: Number(e.target.value) || 160 })}
-            className="w-16 rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
-            aria-label="Height in pixels"
-          />
-          <span className="text-xs text-slate-400">px tall</span>
-        </div>
-      )}
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-slate-500">Width</span>
+        <button onClick={() => onSetSize(cols - 1)} disabled={cols <= 1} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">−</button>
+        <span className="text-xs w-6 text-center">{cols}</span>
+        <button onClick={() => onSetSize(cols + 1)} disabled={cols >= 3} className="rounded px-1 text-xs border border-slate-300 disabled:opacity-30">+</button>
+      </div>
     </div>
   )
 }
@@ -280,7 +258,7 @@ export default function Dashboard() {
   const { data, isLoading, loadData, mutate } = useData()
   const { syncSession, syncSessionDelete } = useSessionSync()
   const { push } = useUndo()
-  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, layoutMode, setMode, setWidgetSize, setWidgetPx, runCascade, moveWidgetToColumn } = useDashboardWidgets()
+  const { visibleWidgets, setVisibleWidgets, widgetConfigs, setWidgetConfigs, setWidgetSize, moveWidgetToColumn } = useDashboardWidgets()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [logModalOpen, setLogModalOpen] = useState(false)
   const [recentLimit, setRecentLimit] = useState(10)
@@ -320,19 +298,6 @@ export default function Dashboard() {
       cancelAnimationFrame(raf)
     }
   }, [activeId])
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  // Measured freeform container width, so widgets can use the full viewport
-  // on wide monitors instead of being capped at a hardcoded 1200px.
-  const [freeformWidth, setFreeformWidth] = useState<number | undefined>(undefined)
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el || layoutMode !== 'freeform') return
-    const measure = () => setFreeformWidth(el.getBoundingClientRect().width)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [layoutMode])
   // Re-sync the dashboard from Dexie on mount and whenever the tab regains
   // focus. This guarantees the daily total reflects every session add/edit/
   // delete that happened in any tab (or before the page loaded), instead of
@@ -343,10 +308,6 @@ export default function Dashboard() {
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [loadData])
-  const dragOriginRef = useRef<{ id: string; snapshot: { x?: number; y?: number; width?: number; height?: number } } | null>(null)
-  // Full snapshot of all widget configs at drag start, so undo restores the
- // entire cascade, not just the dragged widget.
-  const widgetConfigsSnapshotRef = useRef<Record<string, { x?: number; y?: number; width?: number; height?: number }> | null>(null)
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
   const [batchSubjectModalOpen, setBatchSubjectModalOpen] = useState(false)
@@ -402,8 +363,6 @@ export default function Dashboard() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
-    // Freeform mode uses native pointer drag; handleDragEnd is grid-only.
-    if (layoutMode === 'freeform') return
     if (!over || active.id === over.id) return
 
     const fromId = active.id as string
@@ -660,7 +619,11 @@ export default function Dashboard() {
     let active = isTimerActive()
     const tick = () => {
       const nowActive = isTimerActive()
-      setLiveTimerSeconds(nowActive ? getLiveTimerSeconds() : 0)
+      // C2 fix: pass subjects/categories so getLiveTimerSeconds filters out
+      // non-academic QuickTimer sessions from the academic "Today" total.
+      setLiveTimerSeconds(
+        nowActive ? getLiveTimerSeconds(data.subjects, data.categories) : 0
+      )
       setLiveTimerSubjectId(nowActive ? getLiveTimerSubjectId() : null)
       if (nowActive !== active) {
         active = nowActive
@@ -670,7 +633,7 @@ export default function Dashboard() {
     }
     tick()
     interval = window.setInterval(tick, active ? 1000 : 5000)
-  }, [])
+  }, [data.subjects, data.categories])
   const [editSubjectId, setEditSubjectId] = useState('')
 
   async function saveEditLog() {
@@ -862,8 +825,8 @@ export default function Dashboard() {
   }
   const toggleWidget = (id: string) => {
     if (visibleWidgets.includes(id)) {
-      setVisibleWidgets(visibleWidgets.filter((w) => w !== id))
-      runCascade()
+      const next = visibleWidgets.filter((w) => w !== id)
+      setVisibleWidgets(next)
     } else {
       // Insert at the original position from DASHBOARD_WIDGETS_METADATA so
       // the widget returns to its natural slot after being toggled off/on.
@@ -876,9 +839,6 @@ export default function Dashboard() {
       if (insertAt === -1) next.push(id)
       else next.splice(insertAt, 0, id)
       setVisibleWidgets(next)
-      // Re-run the cascade so the re-added widget settles into a free slot
-      // instead of overlapping widgets that fell up into its old position.
-      runCascade()
     }
   }
 
@@ -922,9 +882,6 @@ export default function Dashboard() {
 
 
   if (isLoading) return <PageSpinner />
-  const todayMinutes = academicSessions
-    .filter((s) => toLocalDateString(s.startAt) === todayStr)
-    .reduce((sum, s) => sum + s.durationMinutes, 0)
   const liveTotalTodayMinutes = getTotalTodayMinutes(data.sessions, data.subjects, data.categories)
   const goalPct = Math.min(100, Math.round((liveTotalTodayMinutes / settings.dailyTargetMinutes) * 100))
   const allRecent = academicSessions
@@ -938,17 +895,20 @@ export default function Dashboard() {
   const recentSessions = allRecent.slice(0, recentLimit)
   function removeWidgetWithUndo(id: string) {
     const previousIndex = visibleWidgets.indexOf(id)
-    setVisibleWidgets(prev => prev.filter(w => w !== id))
-    runCascade()
+    const next = visibleWidgets.filter(w => w !== id)
+    setVisibleWidgets(next)
     const label = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id
     push({
       description: `Removed ${label} widget`,
-      undo: async () => setVisibleWidgets(prev => {
-        const next = [...prev]
-        next.splice(previousIndex, 0, id)
-        return next
-      }),
-      redo: async () => setVisibleWidgets(prev => prev.filter(w => w !== id)),
+      undo: async () => {
+        const restore = [...next]
+        restore.splice(previousIndex, 0, id)
+        setVisibleWidgets(restore)
+      },
+      redo: async () => {
+        const again = next
+        setVisibleWidgets(again)
+      },
     })
   }
 
@@ -1084,7 +1044,7 @@ export default function Dashboard() {
           <div className="space-y-3">
             <div className="flex items-end justify-between gap-3">
               <div className="flex items-end gap-2">
-                <div className={cn('relative w-16 h-16 rounded-full', streak > 0 && todayMinutes === 0 && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-800 animate-[milestone-pulse_2s_ease-in-out_infinite]')}>
+                <div className={cn('relative w-16 h-16 rounded-full', streak > 0 && liveTotalTodayMinutes === 0 && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-800 animate-[milestone-pulse_2s_ease-in-out_infinite]')}>
                   <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
                     <circle
                       className="text-slate-200 dark:text-slate-700"
@@ -1111,7 +1071,7 @@ export default function Dashboard() {
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <div className="text-2xl font-bold text-orange-500 leading-none">{streak}</div>
-                    {streak > 0 && todayMinutes === 0 && <span className="text-[8px] text-amber-500/70 leading-none mt-0.5">at risk</span>}
+                    {streak > 0 && liveTotalTodayMinutes === 0 && <span className="text-[8px] text-amber-500/70 leading-none mt-0.5">at risk</span>}
                   </div>
                 </div>
                 <span className="text-sm text-slate-500">day{streak !== 1 ? 's' : ''}</span>
@@ -1132,7 +1092,7 @@ export default function Dashboard() {
               </div>
             </div>
             {streak === 0 && <p className="text-sm text-slate-500">Log a session today to start your streak!</p>}
-            {streak > 0 && todayMinutes === 0 && (
+            {streak > 0 && liveTotalTodayMinutes === 0 && (
               <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
                 Log today to keep your streak — one missed day is forgiven per chain.
                 If you miss two days in a row, the chain breaks.
@@ -1632,7 +1592,7 @@ export default function Dashboard() {
               const now = Date.now()
               const todayStr = format(new Date(), 'yyyy-MM-dd')
               const allPending = data.sessions.filter(
-                s => s.source === 'autoRoutine' && s.deletedAt && (now - new Date(s.createdAt).getTime()) < 7 * 86400000
+                s => s.source === 'autoRoutine' && s.deletedAt && (now - new Date(s.createdAt).getTime()) < 24 * 60 * 60 * 1000
               )
               const todayPending = allPending.filter(s => format(new Date(s.createdAt), 'yyyy-MM-dd') === todayStr)
               const olderPending = allPending.filter(s => format(new Date(s.createdAt), 'yyyy-MM-dd') !== todayStr)
@@ -1729,43 +1689,6 @@ export default function Dashboard() {
   return (
     <div data-tour="dashboard" className="space-y-6 overflow-x-hidden">
       <div className="flex items-center gap-2">
-        <div
-          role="tablist"
-          aria-label="Dashboard layout"
-          data-tour="layout-toggle"
-          className="inline-flex items-center rounded-md border border-slate-300 bg-white p-0.5 text-sm dark:border-slate-600 dark:bg-slate-800"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={layoutMode === 'grid'}
-            onClick={() => setMode('grid')}
-            className={cn(
-              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
-              layoutMode === 'grid'
-                ? 'bg-primary-600 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            )}
-            title="Grid layout: widgets snap to columns"
-          >
-            <span aria-hidden="true">⊞</span> Grid
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={layoutMode === 'freeform'}
-            onClick={() => setMode('freeform', freeformWidth)}
-            className={cn(
-              'flex items-center gap-1 rounded px-2.5 py-1 text-sm transition-colors',
-              layoutMode === 'freeform'
-                ? 'bg-primary-600 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            )}
-            title="Freeform layout: drag widgets and resize corners"
-          >
-            <span aria-hidden="true">⬡</span> Freeform
-          </button>
-        </div>
         <button
           type="button"
           data-tour="customise-btn"
@@ -1809,8 +1732,7 @@ export default function Dashboard() {
           resetDragState()
         }}
       >
-        {layoutMode === 'grid' ? (
-          <div ref={containerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 items-start">
             {[0, 1, 2].map((colIdx) => {
               const colItems = columnItems[colIdx]
               const isTarget = overColumn === colIdx
@@ -1844,7 +1766,6 @@ export default function Dashboard() {
                           <DashboardWidget
                             id={id}
                             label={DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)?.label || id}
-                            mode="grid"
                             cols={widgetConfigs[id]?.cols ?? 1}
                             onResizeGrid={(c) => setWidgetSize(id, c, 1)}
                             onRemove={() => removeWidgetWithUndo(id)}
@@ -1859,111 +1780,7 @@ export default function Dashboard() {
                 </SortableContext>
               )
             })}
-          </div>
-        ) : (
-          <div ref={containerRef} data-tour="freeform-area" className="relative w-full overflow-x-hidden bg-slate-50 dark:bg-slate-900 rounded-lg"
-            style={{ minHeight: 600, height: (() => {
-              // Auto-grow the container so it always contains every widget.
-              let maxY = 0
-              for (const wid of visibleWidgets) {
-                const c = widgetConfigs[wid] ?? {}
-                const d = DEFAULT_FREEFORM_SIZE[wid] ?? { width: 360, height: 280 }
-                maxY = Math.max(maxY, (c.y ?? 0) + (c.height ?? d.height))
-              }
-              return Math.max(600, maxY + 24)
-            })() }}
-          >
-            {visibleWidgets.map(id => {
-              const config = widgetConfigs[id] ?? {}
-              const defaults = DEFAULT_FREEFORM_SIZE[id] ?? { width: 360, height: 280 }
-              const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === id)
-              const label = meta?.label || id
-              const w = config.width ?? defaults.width
-              const h = config.height ?? defaults.height
-              const x = config.x ?? 0
-              const y = config.y ?? 0
-              return (
-                <div
-                  key={id}
-                  className="absolute"
-                  style={{ left: x, top: y, width: w, height: h }}
-                >
-                  <FreeformWidget
-                    id={id}
-                    label={label}
-                    width={w}
-                    height={h}
-                    onDragStart={() => {
-                      // Snapshot every widget's position so Ctrl+Z undoes the
-                      // entire cascade, not just the dragged widget.
-                      const snapshot: Record<string, { x?: number; y?: number; width?: number; height?: number }> = {}
-                      for (const wid of visibleWidgets) {
-                        const wc = widgetConfigs[wid] ?? {}
-                        snapshot[wid] = { ...wc }
-                      }
-                      dragOriginRef.current = { id, snapshot: snapshot[id] ?? {} }
-                      widgetConfigsSnapshotRef.current = snapshot
-                    }}
-                    onDragPreview={() => {
-                      // No-op: FreeformWidget applies its own transform via ref.
-                    }}
-                    onResize={(size) => {
-                      widgetConfigsSnapshotRef.current ??= { id: { ...config } }
-                      setWidgetPx(id, size, true)
-                    }}
-                    onResizeEnd={() => {
-                      // Commit the resize via cascade so overlapping widgets
-                      // fall up around the newly sized widget.
-                      runCascade(id)
-                    }}
-                    onCommit={(pos) => {
-                      const origin = dragOriginRef.current
-                      const fullSnapshot = widgetConfigsSnapshotRef.current
-                      dragOriginRef.current = null
-                      widgetConfigsSnapshotRef.current = null
-                      // Commit the widget's top-left position, then cascade
-                      // with this widget pinned so others fall up around it.
-                      setWidgetConfigs((prev) => {
-                        const cur = prev[id] ?? {}
-                        return { ...prev, [id]: { ...cur, x: pos.x, y: pos.y } }
-                      })
-                      runCascade(id)
-                      if (origin && origin.id === id && fullSnapshot) {
-                        const before = origin.snapshot
-                        const moved = pos.x !== (before.x ?? 0) || pos.y !== (before.y ?? 0) ||
-                                      w !== (before.width ?? defaults.width) || h !== (before.height ?? defaults.height)
-                        if (moved) {
-                          push({
-                            description: `Moved ${label}`,
-                            undo: async () => {
-                              // Restore every widget to its pre-drag position
-                              // (this also undoes the cascade movement).
-                              setWidgetConfigs((prev) => {
-                                const next = { ...prev }
-                                for (const wid of visibleWidgets) {
-                                  const snap = fullSnapshot[wid]
-                                  if (snap) next[wid] = { ...next[wid], ...snap }
-                                }
-                                return next
-                              })
-                            },
-                            redo: async () => {
-                              setWidgetPx(id, pos, true)
-                              runCascade(id)
-                            },
-                          })
-                        }
-                      }
-                    }}
-                    onRemove={() => removeWidgetWithUndo(id)}
-                  >
-                    {renderWidget(id)}
-                  </FreeformWidget>
-                </div>
-              )
-            })}
-          </div>
-        )}
+        </div>
         <DragOverlay dropAnimation={null}>
           {activeId ? (() => {
             const meta = DASHBOARD_WIDGETS_METADATA.find(w => w.id === activeId)
@@ -1977,31 +1794,6 @@ export default function Dashboard() {
         </DragOverlay>
       </DndContext>
       <Modal open={customizeOpen} onClose={() => setCustomizeOpen(false)} title="Customise Dashboard">
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-2">
-          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Layout</span>
-          <button
-            onClick={() => setMode('grid')}
-            className={cn(
-              'rounded px-2 py-1 text-xs',
-              layoutMode === 'grid'
-                ? 'bg-primary-600 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
-            )}
-          >
-            Grid
-          </button>
-          <button
-            onClick={() => setMode('freeform', freeformWidth)}
-            className={cn(
-              'rounded px-2 py-1 text-xs',
-              layoutMode === 'freeform'
-                ? 'bg-primary-600 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
-            )}
-          >
-            Freeform
-          </button>
-        </div>
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <SortableContext items={visibleWidgets} strategy={verticalListSortingStrategy}>
             <div className="space-y-2 max-h-[60vh] overflow-y-auto">
@@ -2013,12 +1805,9 @@ export default function Dashboard() {
                     id={w.id}
                     label={w.label}
                     visible={isVisible}
-                    layoutMode={layoutMode}
                     cols={widgetConfigs[w.id]?.cols ?? 1}
-                    config={widgetConfigs[w.id]}
                     onToggle={() => toggleWidget(w.id)}
                     onSetSize={(c) => setWidgetSize(w.id, c, 1)}
-                    onSetPx={(px) => setWidgetPx(w.id, px)}
                   />
                 )
               })}
@@ -2032,7 +1821,6 @@ export default function Dashboard() {
             onClick={() => {
               setVisibleWidgets(DEFAULT_WIDGET_IDS)
               setWidgetConfigs(DEFAULT_CONFIGS)
-              setMode('grid')
             }}
           >
             Reset to defaults
@@ -2047,9 +1835,9 @@ export default function Dashboard() {
             {[
               { label: 'Log study time', icon: '⏱', onClick: () => { setLogModalOpen(true); setFabOpen(false) } },
               { label: 'Start quick Pomodoro', icon: '🍅', onClick: () => { window.dispatchEvent(new CustomEvent('momentum:timer-toggle')); setFabOpen(false) } },
-              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:marks-add'))); setFabOpen(false) } },
-              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:calendar-add'))); setFabOpen(false) } },
-              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects'); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('momentum:subjects-add'))); setFabOpen(false) } },
+              { label: 'Add a new mark', icon: '📝', onClick: () => { navigate('/marks', { state: { openAdd: true } }); setFabOpen(false) } },
+              { label: 'Add a new task', icon: '📅', onClick: () => { navigate('/calendar', { state: { openAdd: true } }); setFabOpen(false) } },
+              { label: 'Add a new subject', icon: '+', onClick: () => { navigate('/subjects', { state: { openAdd: true } }); setFabOpen(false) } },
             ].map((action, i) => (
               <div key={i} className="group relative flex items-center">
                 <div className="absolute right-14 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-slate-200 dark:text-slate-800 pointer-events-none">
