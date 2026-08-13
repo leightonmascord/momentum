@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useData } from '../../app/providers'
 import { db } from '../../db/app-db'
 import { cn, gradeColor, isoNow, pctToGrade, getSubjectPathLabel, getSubjectPickerOptions } from '../../lib/utils'
@@ -56,6 +57,8 @@ type SortOrder = 'asc' | 'desc'
 
 export default function MarksPage() {
   const { data, isLoading, loadData } = useData()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Mark | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -118,6 +121,15 @@ export default function MarksPage() {
   const openAdd = () => { setEditing(null); setForm(emptyForm()); setModalOpen(true) }
   const openEdit = (m: Mark) => { setEditing(m); setForm(toForm(m)); setModalOpen(true) }
   const closeModal = () => { setModalOpen(false); setEditing(null) }
+  // M1 fix: FAB navigates here with { state: { openAdd: true } } — open the
+  // add modal on mount and clear the flag so it doesn't re-open on back-nav.
+  useEffect(() => {
+    if (location.state?.openAdd) {
+      openAdd()
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // N — Add new mark
   useEffect(() => {
     function onAdd() { openAdd() }

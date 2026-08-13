@@ -403,6 +403,9 @@ export function SchedulePage() {
         createdAt: isoNow(),
         updatedAt: isoNow(),
       }
+      // H2 fix: persist the session id on the log so untick can find the
+      // exact session instead of relying on a fragile note-string match.
+      log.sessionId = session.id
     }
     // Instant UI update FIRST
     mutate(prev => ({
@@ -554,10 +557,11 @@ export function SchedulePage() {
                   onUndo={() => {
                     const log = getActivityLogForToday(activity.id)
                     if (log) {
-                        db.activityLogs.delete(log.id).then(() => {
-                            db.sessions.where({ note: `Activity: ${activity.name}` }).delete()
-                            loadData()
-                        })
+                        // H2 fix: use the persisted sessionId (H2) instead of
+                        // the brittle note-string match that matched nothing.
+                        const deletes: Array<Promise<unknown>> = [db.activityLogs.delete(log.id)]
+                        if (log.sessionId) deletes.push(db.sessions.delete(log.sessionId))
+                        Promise.all(deletes).then(() => loadData())
                     }
                   }}
                 />

@@ -268,21 +268,29 @@ export default function RoutinePage() {
       updates.push({ id: r.id, prev: { ...r }, dayMinutes })
     }
     try {
-      for (const u of updates) {
-        await db.routines.update(u.id, { dayMinutes: u.dayMinutes, updatedAt: isoNow() })
-      }
+      // L11 fix: bulk update in a single transaction for atomicity.
+      await db.transaction('rw', db.routines, async () => {
+        for (const u of updates) {
+          await db.routines.update(u.id, { dayMinutes: u.dayMinutes, updatedAt: isoNow() })
+        }
+      })
       push({
         description: `Updated ${updates.length} routine${updates.length !== 1 ? 's' : ''}`,
         undo: async () => {
-          for (const u of updates) {
-            await db.routines.update(u.id, { dayMinutes: u.prev.dayMinutes, updatedAt: isoNow() })
-          }
+          // L11 fix: undo/redo also transactional.
+          await db.transaction('rw', db.routines, async () => {
+            for (const u of updates) {
+              await db.routines.update(u.id, { dayMinutes: u.prev.dayMinutes, updatedAt: isoNow() })
+            }
+          })
           await loadData()
         },
         redo: async () => {
-          for (const u of updates) {
-            await db.routines.update(u.id, { dayMinutes: u.dayMinutes, updatedAt: isoNow() })
-          }
+          await db.transaction('rw', db.routines, async () => {
+            for (const u of updates) {
+              await db.routines.update(u.id, { dayMinutes: u.dayMinutes, updatedAt: isoNow() })
+            }
+          })
           await loadData()
         },
       })

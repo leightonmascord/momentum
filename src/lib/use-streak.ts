@@ -43,8 +43,11 @@ export function useStreak(sessions: Session[], previewDates: Set<string> = new S
   }, [sessions, previewDates]);
 
   // Longest streak ever in the dataset — uses the SAME one-gap-per-chain
-  // rule as the current streak above (L3 fix: old code incremented `cur`
-  // on a gap, inflating the longest vs current display).
+  // rule as the current streak above. The current-streak rule resets its
+  // gap budget on every logged day, so a chain is any run of logged days
+  // where every adjacent gap is <= 2 (i.e. at most one missed day between
+  // any two logged days). A gap of 3+ (two or more consecutive missed days)
+  // always breaks the chain.
   const longestStreak = useMemo(() => {
     const daySet = new Set<string>();
     for (const s of sessions) {
@@ -54,24 +57,20 @@ export function useStreak(sessions: Session[], previewDates: Set<string> = new S
     if (sortedDays.length <= 1) return sortedDays.length;
     let max = 0;
     let cur = 1;
-    let gapUsed = false;
     for (let i = 1; i < sortedDays.length; i++) {
       const diff = differenceInCalendarDays(
         new Date(sortedDays[i]),
         new Date(sortedDays[i - 1])
       );
-      if (diff === 1) {
+      if (diff <= 2) {
+        // diff=1: consecutive day, continue chain.
+        // diff=2: one missed day, allowed (gap budget replenishes on the
+        //   next logged day, matching the current-streak rule).
         cur++;
-      } else if (diff === 2 && !gapUsed) {
-        // Allow one gap per chain — count the day after the gap but
-        // don't reset the chain. Once the gap is consumed, the next
-        // missed day breaks the chain.
-        cur++;
-        gapUsed = true;
       } else {
+        // diff >= 3: two or more consecutive missed days break the chain.
         if (cur > max) max = cur;
         cur = 1;
-        gapUsed = false;
       }
     }
     if (cur > max) max = cur;

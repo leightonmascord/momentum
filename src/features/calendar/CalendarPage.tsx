@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useData } from '../../app/providers'
 import { db } from '../../db/app-db'
 import { cn, gradeColor, isoNow, pctToGrade, sessionLocalDate, softDelete } from '../../lib/utils'
@@ -66,6 +67,8 @@ const emptyMarkForm = (): MarkForm => ({ score: '', total: '100' })
 export default function CalendarPage() {
   const { data, isLoading, loadData, mutate } = useData()
   const { push: pushUndo } = useUndo()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [viewDate, setViewDate] = useState(() => new Date())
   const [isMobile, setIsMobile] = useState(false)
   useEffect(() => {
@@ -76,6 +79,15 @@ export default function CalendarPage() {
     return () => mql.removeEventListener('change', onChange)
   }, [])
   const [modalOpen, setModalOpen] = useState(false)
+  // M1 fix: FAB navigates here with { state: { openAdd: true } } — open the
+  // add modal on mount and clear the flag.
+  useEffect(() => {
+    if (location.state?.openAdd) {
+      setModalOpen(true)
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [editing, setEditing] = useState<Assignment | null>(null)
   const [form, setForm] = useState<TaskForm>(() => emptyForm(data.subjects))
 

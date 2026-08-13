@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { v4 as uuid } from 'uuid'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useData } from '../../app/providers'
 import { db } from '../../db/app-db'
 import { cn, isoNow, isTopLevelSubject, getChildSubjects } from '../../lib/utils'
@@ -40,13 +40,14 @@ export default function SubjectsPage() {
   const { data, isLoading, loadData } = useData()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const { push: pushUndo } = useUndo()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
   const [deleteSubject, setDeleteSubject] = useState<Subject | null>(null)
   const [formData, setFormData] = useState<SubjectFormData>(emptyFormData)
   const [isSaving, setIsSaving] = useState(false)
   const [filterCategory, setFilterCategory] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
-
   const activeSubjects = data.subjects.filter((s) => !s.deletedAt)
   const topLevelSubjects = activeSubjects
     .filter((s) => isTopLevelSubject(s) && (!filterCategory || s.categoryId === filterCategory))
@@ -179,25 +180,39 @@ export default function SubjectsPage() {
           ? `Deleted focus area "${originalSubject.name}" and ${totalItems} related items`
           : `Deleted focus area`,
         undo: async () => {
-          // Restore children first, then parent
-          for (const childId of allChildIds) {
-            await db.subjects.update(childId, { deletedAt: null, updatedAt: isoNow() })
-          }
-          await db.subjects.update(subjId, { deletedAt: null, updatedAt: isoNow() })
-          for (const p of prevProjects) await db.projects.update(p.id, { deletedAt: null, updatedAt: isoNow() })
-          for (const s of prevSessions) await db.sessions.update(s.id, { deletedAt: null, updatedAt: isoNow() })
-          for (const a of prevAssignments) await db.assignments.update(a.id, { deletedAt: null, updatedAt: isoNow() })
+          // L11 fix: wrap cross-table restore in a single transaction.
+          await db.transaction(
+            'rw',
+            [db.subjects, db.projects, db.sessions, db.assignments],
+            async () => {
+              // Restore children first, then parent
+              for (const childId of allChildIds) {
+                await db.subjects.update(childId, { deletedAt: null, updatedAt: isoNow() })
+              }
+              await db.subjects.update(subjId, { deletedAt: null, updatedAt: isoNow() })
+              for (const p of prevProjects) await db.projects.update(p.id, { deletedAt: null, updatedAt: isoNow() })
+              for (const s of prevSessions) await db.sessions.update(s.id, { deletedAt: null, updatedAt: isoNow() })
+              for (const a of prevAssignments) await db.assignments.update(a.id, { deletedAt: null, updatedAt: isoNow() })
+            }
+          )
           await loadData()
         },
         redo: async () => {
           const redoNow = isoNow()
-          await db.subjects.update(subjId, { deletedAt: redoNow, updatedAt: redoNow })
-          for (const childId of allChildIds) {
-            await db.subjects.update(childId, { deletedAt: redoNow, updatedAt: redoNow })
-          }
-          for (const p of prevProjects) await db.projects.update(p.id, { deletedAt: redoNow, updatedAt: redoNow })
-          for (const s of prevSessions) await db.sessions.update(s.id, { deletedAt: redoNow, updatedAt: redoNow })
-          for (const a of prevAssignments) await db.assignments.update(a.id, { deletedAt: redoNow, updatedAt: redoNow })
+          // L11 fix: same transaction for redo.
+          await db.transaction(
+            'rw',
+            [db.subjects, db.projects, db.sessions, db.assignments],
+            async () => {
+              await db.subjects.update(subjId, { deletedAt: redoNow, updatedAt: redoNow })
+              for (const childId of allChildIds) {
+                await db.subjects.update(childId, { deletedAt: redoNow, updatedAt: redoNow })
+              }
+              for (const p of prevProjects) await db.projects.update(p.id, { deletedAt: redoNow, updatedAt: redoNow })
+              for (const s of prevSessions) await db.sessions.update(s.id, { deletedAt: redoNow, updatedAt: redoNow })
+              for (const a of prevAssignments) await db.assignments.update(a.id, { deletedAt: redoNow, updatedAt: redoNow })
+            }
+          )
           await loadData()
         },
       })
@@ -219,6 +234,15 @@ export default function SubjectsPage() {
     function onAdd() { handleOpenModal(null) }
     window.addEventListener('momentum:subjects-add', onAdd)
     return () => window.removeEventListener('momentum:subjects-add', onAdd)
+  }, [])
+  // M1 fix: FAB navigates here with { state: { openAdd: true } } — open the
+  // add modal on mount and clear the flag.
+  useEffect(() => {
+    if (location.state?.openAdd) {
+      handleOpenModal(null)
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   
   useEffect(() => {
