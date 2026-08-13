@@ -47,7 +47,7 @@ export interface UseTimerTabLockResult {
 export function useTimerTabLock(isLocalRunning: boolean): UseTimerTabLockResult {
   const myTabIdRef = useRef<string>(shortId())
   const channelRef = useRef<BroadcastChannel | null>(null)
-  const lastPeerTsRef = useRef<number>(0)
+  const lastPeerTsRef = useRef<number>(Date.now())
   const lastPeerTabIdRef = useRef<string>('')
   const [peerTs, setPeerTs] = useState<number>(0)
   const [ownerId, setOwnerId] = useState<string | null>(() => {
@@ -112,18 +112,38 @@ export function useTimerTabLock(isLocalRunning: boolean): UseTimerTabLockResult 
   const isOwner = isLocalRunning && !ownerIsLive
   const isOwnedElsewhere = ownerIsLive
 
-  // When the timer is running and we are the owner, broadcast heartbeats.
+  // When the timer is running and we are the owner, write the owner key and
+  // broadcast heartbeats. Writing the key on becoming owner is what lets a
+  // newly-opened tab see that the timer is already owned and defer — without
+  // it, every tab reads `ownerId = null` and independently claims ownership,
+  // so both save a session on stop (duplicate).
   useEffect(() => {
     if (!isBroadcastChannelSupported()) return
     if (!isLocalRunning || !isOwner) return
-    function beat() {
+    claim()
+    const timer = window.setInterval(() => {
       try {
         channelRef.current?.postMessage({ type: 'heartbeat', tabId: myTabIdRef.current, ts: Date.now() } satisfies BroadcastMessage)
       } catch { /* ignore */ }
-    }
-    beat()
-    const timer = window.setInterval(beat, HEARTBEAT_INTERVAL_MS)
+    }, HEARTBEAT_INTERVAL_MS)
     return () => clearInterval(timer)
+  }, [isLocalRunning, isOwner])
+
+  // When the owning tab closes, clear the owner key and broadcast release so
+  // a peer tab can reclaim ownership immediately instead of waiting for the
+  // 6s stale timeout. Without this, the owner key lingers and the next tab
+  // defers for up to 6s (or, worse, the key is never cleared and no tab
+  // reclaims until the timer is stopped).
+  useEffect(() => {
+    if (!isLocalRunning || !isOwner) return
+    function handleUnload() {
+      try { localStorage.removeItem(OWNER_KEY) } catch { /* ignore */ }
+      try {
+        channelRef.current?.postMessage({ type: 'release', tabId: myTabIdRef.current, ts: Date.now() } satisfies BroadcastMessage)
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
   }, [isLocalRunning, isOwner])
 
   // If the owner key is set but the owner is dead, reclaim ownership.
